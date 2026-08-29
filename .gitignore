@@ -1,0 +1,22 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Agent configs/scratch
+.gemini/
+.agents/
+scratch/
+brain/
+
+# Agent documentation and specification files
+/*.md
+!/README.md
