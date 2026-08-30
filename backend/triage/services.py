@@ -106,6 +106,9 @@ def run_triage_assessment(patient, trigger='initial_assessment') -> RiskAssessme
     resources = _get_resources()
     surge = _is_surge_active()
 
+    if trigger in ('manual_reassessment', 'vitals_update', 'deterioration_detected', 'complaint_updated', 'initial_assessment'):
+        patient.under_scan = False
+
     if trigger == 'initial_assessment':
         result = assess_patient(state, resources=resources, surge_active=surge)
     else:
@@ -113,16 +116,30 @@ def run_triage_assessment(patient, trigger='initial_assessment') -> RiskAssessme
 
     old_priority = patient.current_priority
 
-    # Run AI Assistant clinical assessment
-    from decision_engine.ai_assistant import analyze_symptoms_ai
+    # Run AI Assistant clinical assessment (RAG-augmented)
+    from decision_engine.ai_assistant import analyze_symptoms_ai, analyze_degradation_ai, ai_mode_status
     ai_support = analyze_symptoms_ai(
         chief_complaint=patient.chief_complaint,
         relevant_history=patient.relevant_history or '',
         age=patient.age,
-        sex=patient.sex or ''
+        sex=patient.sex or '',
+        age_group=patient.age_group or 'adult',
     )
 
-    # Persist assessment
+    degrad_res = analyze_degradation_ai(
+        chief_complaint=patient.chief_complaint,
+        relevant_history=patient.relevant_history or '',
+        age=patient.age,
+        sex=patient.sex or '',
+        age_group=patient.age_group or 'adult',
+    )
+    patient.degradation_rate = degrad_res.get('degradation_rate', 0.001)
+    if ai_support:
+        ai_support['criticalness'] = degrad_res.get('criticalness', 'Low')
+        ai_support['degradation_explanation'] = degrad_res.get('explanation', '')
+
+    # Persist assessment (with confidence breakdown and AI mode)
+    current_ai_mode = ai_mode_status().get('mode', 'STATIC')
     assessment = RiskAssessment.objects.create(
         patient=patient,
         priority=result.priority,
@@ -135,14 +152,65 @@ def run_triage_assessment(patient, trigger='initial_assessment') -> RiskAssessme
         requires_human_review=result.requires_human_review,
         trigger=trigger,
         ai_decision_support=ai_support,
+        confidence_breakdown=result.confidence_breakdown,
+        ai_mode=current_ai_mode,
     )
 
-    # Update patient priority
+    # Update patient priority and scheduler states
     priority_changed = patient.current_priority != result.priority
     patient.current_priority = result.priority
     patient.current_destination = result.recommended_destination
     patient.current_queue = result.recommended_destination
-    patient.save(update_fields=['current_priority', 'current_destination', 'current_queue', 'updated_at'])
+
+    if not patient.assigned_doctor:
+        dept = (patient.current_destination or patient.current_queue or '').lower()
+        comp = (patient.chief_complaint or '').lower()
+        doc = 'Dr. Sen'
+        if 'cardiac' in dept or 'chest' in comp or 'cardiac' in comp:
+            doc = 'Dr. Kapoor'
+        elif 'pediatr' in dept or 'child' in comp or 'baby' in comp or patient.age_group == 'pediatric':
+            doc = 'Dr. Sharma'
+        elif any(x in comp or x in dept for x in ('ortho', 'trauma', 'fracture', 'accident', 'injured', 'fall', 'laceration')):
+            doc = 'Dr. Roy'
+        elif 'respir' in dept or 'breath' in comp or 'copd' in comp or 'cough' in comp:
+            doc = 'Dr. Patel'
+        elif any(x in comp for x in ('stroke', 'weakness', 'slurred', 'confusion')) or 'neurolog' in dept:
+            doc = 'Dr. Iyer'
+        elif 'resus' in dept:
+            doc = 'Dr. Joshi'
+        patient.assigned_doctor = doc
+
+    has_vitals = patient.vital_readings.exists()
+    if not has_vitals:
+        patient.current_destination = ""
+        patient.current_queue = ""
+        patient.scheduler_state = "blocked"
+    else:
+        if patient.under_scan:
+            patient.scheduler_state = "blocked"
+        elif patient.status == "in_progress":
+            patient.scheduler_state = "running"
+        elif patient.status in ["discharged", "admitted", "referred"]:
+            patient.scheduler_state = "referred"
+        else:
+            patient.scheduler_state = "ready"
+
+    # Base triage score mapping for scheduler
+    prio_base = {"P1": 0.90, "P2": 0.70, "P3": 0.50, "P4": 0.30, "P5": 0.10}
+    base_score = prio_base.get(result.priority, 0.10)
+    wait_min = state.waiting_minutes if state else 0
+
+    if patient.scheduler_state == "ready":
+        patient.dynamic_priority_score = base_score + (wait_min * patient.degradation_rate)
+    elif patient.scheduler_state == "running":
+        patient.dynamic_priority_score = base_score
+    else:
+        patient.dynamic_priority_score = 0.0
+
+    patient.save(update_fields=[
+        'current_priority', 'current_destination', 'current_queue', 
+        'degradation_rate', 'scheduler_state', 'dynamic_priority_score', 'under_scan', 'assigned_doctor', 'updated_at'
+    ])
 
     # Update or create queue entry
     QueueEntry.objects.filter(patient=patient, active=True).update(
@@ -150,7 +218,7 @@ def run_triage_assessment(patient, trigger='initial_assessment') -> RiskAssessme
     )
     QueueEntry.objects.create(
         patient=patient,
-        queue_type=result.recommended_destination,
+        queue_type=patient.current_queue or "general_emergency",
         priority=result.priority,
         active=True,
     )
@@ -163,7 +231,13 @@ def run_triage_assessment(patient, trigger='initial_assessment') -> RiskAssessme
         actor_id='decision-engine-v1',
         patient_id=patient.id,
         old_state={'priority': old_priority},
-        new_state={'priority': result.priority, 'confidence': result.confidence},
+        new_state={
+            'priority': result.priority,
+            'confidence': result.confidence,
+            'ai_mode': current_ai_mode,
+            'confidence_breakdown': result.confidence_breakdown,
+            'ai_decision_support': ai_support,
+        },
         trigger=trigger,
         confidence=result.confidence,
     )

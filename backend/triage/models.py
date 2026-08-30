@@ -17,6 +17,8 @@ class RiskAssessment(models.Model):
     requires_human_review = models.BooleanField(default=False)
     model_version = models.CharField(max_length=50, default='rule-engine-v1')
     ai_decision_support = models.JSONField(null=True, blank=True)
+    confidence_breakdown = models.JSONField(null=True, blank=True)  # per-component confidence data for tooltip
+    ai_mode = models.CharField(max_length=20, default='STATIC', blank=True)  # FULL_AI | RAG_ONLY | STATIC
     trigger = models.CharField(max_length=100, blank=True)  # what caused this assessment
     created_at = models.DateTimeField(auto_now_add=True)
 

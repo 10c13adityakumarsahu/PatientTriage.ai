@@ -5,6 +5,14 @@ import { getResources, api } from '../api'
 import TopNavbar from '../components/TopNavbar'
 import { Plus, Trash, UserCheck, ShieldAlert, Settings, Sparkles, Building, Activity, ShieldCheck, Heart } from 'lucide-react'
 
+const DEFAULT_DEPARTMENTS = [
+  { resource_type: 'cardiac_care', name: 'Cardiac Care' },
+  { resource_type: 'pediatrics', name: 'Pediatric Resuscitation' },
+  { resource_type: 'orthopedics', name: 'Ortho/Trauma Room' },
+  { resource_type: 'resuscitation', name: 'Resuscitation Bay' },
+  { resource_type: 'general_medicine', name: 'General Medicine' }
+];
+
 const DEFAULT_DOCTORS = [
   { id: '1', name: 'Dr. Kapoor', specialty: 'Cardiology', department: 'cardiac_care', status: 'On Duty' },
   { id: '2', name: 'Dr. Sharma', specialty: 'Pediatrics', department: 'pediatrics', status: 'On Duty' },
@@ -20,6 +28,13 @@ export default function ResourcesPage() {
   const navigate = useNavigate()
   const { resources, setResources } = useStore()
   const [loading, setLoading] = useState(true)
+
+  const mergedDepts = [...(resources || [])];
+  DEFAULT_DEPARTMENTS.forEach(def => {
+    if (!mergedDepts.some(r => r.resource_type === def.resource_type)) {
+      mergedDepts.push({ id: def.resource_type, resource_type: def.resource_type, name: def.name });
+    }
+  });
   
   // Clinicians State (persisted via localStorage)
   const [doctors, setDoctors] = useState(() => {
@@ -295,10 +310,17 @@ export default function ResourcesPage() {
                       <select 
                         value={doc.department} 
                         onChange={(e) => handleUpdateDocDept(doc.id, e.target.value)}
-                        style={{ padding: '2px 4px', fontSize: '0.72rem', border: '1px solid var(--border)', borderRadius: '4px', background: 'inherit' }}
+                        style={{ 
+                          padding: '2px 4px', 
+                          fontSize: '0.72rem', 
+                          border: '1px solid var(--border)', 
+                          borderRadius: '4px', 
+                          background: 'var(--bg-card)',
+                          color: 'var(--text-primary)'
+                        }}
                       >
-                        {resources.map(r => (
-                          <option key={r.id} value={r.resource_type}>{r.name}</option>
+                        {mergedDepts.map(r => (
+                          <option key={r.id || r.resource_type} value={r.resource_type}>{r.name}</option>
                         ))}
                       </select>
 
@@ -419,8 +441,8 @@ export default function ResourcesPage() {
                       value={newDoc.department} 
                       onChange={e => setNewDoc(prev => ({ ...prev, department: e.target.value }))}
                     >
-                      {resources.map(r => (
-                        <option key={r.id} value={r.resource_type}>{r.name}</option>
+                      {mergedDepts.map(r => (
+                        <option key={r.id || r.resource_type} value={r.resource_type}>{r.name}</option>
                       ))}
                     </select>
                   </div>

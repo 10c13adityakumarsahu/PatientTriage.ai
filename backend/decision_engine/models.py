@@ -56,3 +56,4 @@ class AssessmentResult:
     safety_state: str              # GREEN | YELLOW | RED
     model_version: str = "rule-engine-v1"
     raw_score: float = 0.0
+    confidence_breakdown: dict = field(default_factory=dict)  # per-component breakdown for UI tooltip

@@ -8,4 +8,5 @@ urlpatterns = [
     path('surge/', views.surge),
     path('reset/', views.reset),
     path('status/', views.sim_status),
+    path('intake-next/', views.intake_next),
 ]

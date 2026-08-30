@@ -257,6 +257,30 @@ def test_safety_missing_history():
     print(f"✓ Safety missing-history: {result.priority} confidence={result.confidence:.2f}")
 
 
+# ────────────────────────────────────────────────────────────
+# 11. Casualty / John Doe trauma case (unresponsive + trauma)
+# ────────────────────────────────────────────────────────────
+def test_casualty_unresponsive():
+    state = PatientState(
+        patient_id='test-11',
+        age=35, age_group='adult',
+        chief_complaint='Trauma casualty: Unconscious, found on roadside after motor vehicle crash. Bleeding from scalp, right leg visibly deformed.',
+        symptoms=['laceration', 'bleeding'],
+        history_available=False,
+        current_vitals=make_vitals(
+            heart_rate=115, systolic_bp=90, spo2=89,
+            respiratory_rate=28, temperature=36.6, mental_status='unresponsive'
+        ),
+    )
+    result = assess_patient(state)
+    # Must triage to P1 (unresponsive and trauma) or P2
+    assert result.priority in ('P1', 'P2'), \
+        f"Casualty trauma must triage to high priority: {result.priority}"
+    # Confidence must be lower because history is completely missing
+    assert result.confidence < 0.75
+    print(f"✓ Casualty unresponsive: {result.priority} confidence={result.confidence:.2f}")
+
+
 if __name__ == '__main__':
     tests = [
         test_obvious_high_risk,
@@ -269,6 +293,7 @@ if __name__ == '__main__':
         test_long_wait,
         test_conflicting_signals,
         test_safety_missing_history,
+        test_casualty_unresponsive,
     ]
     passed = 0
     failed = 0

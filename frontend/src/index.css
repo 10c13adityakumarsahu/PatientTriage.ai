@@ -42,40 +42,35 @@
   /* Muted text */
 
   /* Priority colors (tuned for light backgrounds to remain readable) */
-  --p1: #dc2626;
-  /* Rich Red   — Immediate */
-  --p1-bg: rgba(220, 38, 38, 0.06);
-  --p1-border: rgba(220, 38, 38, 0.22);
+  --p1: #b91c1c;
+  --p1-bg: #fee2e2;
+  --p1-border: #fca5a5;
 
-  --p2: #ea580c;
-  /* Rich Orange — Very Urgent */
-  --p2-bg: rgba(234, 88, 12, 0.06);
-  --p2-border: rgba(234, 88, 12, 0.22);
+  --p2: #c2410c;
+  --p2-bg: #ffedd5;
+  --p2-border: #fdba74;
 
-  --p3: #d97706;
-  /* Rich Amber — Urgent */
-  --p3-bg: rgba(217, 119, 6, 0.06);
-  --p3-border: rgba(217, 119, 6, 0.20);
+  --p3: #ca8a04;
+  --p3-bg: #fef9c3;
+  --p3-border: #fde047;
 
-  --p4: #16a34a;
-  /* Rich Green — Less Urgent */
-  --p4-bg: rgba(22, 163, 74, 0.06);
-  --p4-border: rgba(22, 163, 74, 0.20);
+  --p4: #15803d;
+  --p4-bg: #dcfce7;
+  --p4-border: #86efac;
 
-  --p5: #2563eb;
-  /* Rich Blue — Non-Urgent */
-  --p5-bg: rgba(37, 99, 235, 0.06);
-  --p5-border: rgba(37, 99, 235, 0.20);
+  --p5: #1d4ed8;
+  --p5-bg: #dbeafe;
+  --p5-border: #93c5fd;
 
   /* Confidence */
-  --conf-high: #ffffff;
-  --conf-medium: #ffffff;
-  --conf-low: #ffffff;
+  --conf-high: #15803d;
+  --conf-medium: #ca8a04;
+  --conf-low: #b91c1c;
 
   /* Alert severities */
-  --alert-critical: #dc2626;
-  --alert-warning: #d97706;
-  --alert-info: #2563eb;
+  --alert-critical: #b91c1c;
+  --alert-warning: #ca8a04;
+  --alert-info: #1d4ed8;
 
   /* Accent — Sophisticated violet accent */
   --accent: #7c3aed;
@@ -1615,8 +1610,8 @@ body {
   gap: var(--sp-3);
   padding: var(--sp-3) var(--sp-4);
   background: rgba(234, 88, 12, 0.04);
-  border-left: 3px solid var(--p2);
-  border-radius: 0 var(--r-md) var(--r-md) 0;
+  border: 1px solid var(--p2-border);
+  border-radius: var(--r-md);
   font-size: 0.8rem;
   color: var(--text-secondary);
   margin-top: var(--sp-4);
@@ -1945,11 +1940,14 @@ body {
 
 /* ── Queue Subtable Row Hover Effects ── */
 .queue-table-row {
+  position: relative;
+  z-index: 1;
   transition: background var(--transition);
 }
 
 .queue-table-row:hover {
   background: var(--bg-hover) !important;
+  z-index: 10;
 }
 
 .queue-table-row:hover svg {

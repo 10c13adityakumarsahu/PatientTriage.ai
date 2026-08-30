@@ -23,11 +23,14 @@ def seed(request):
 
 @api_view(['POST'])
 def tick(request):
-    """POST /simulation/tick/ — Advance simulation clock and reassess waiting patients."""
+    """POST /simulation/tick/ — Advance simulation clock or step through scheduler stages."""
     from datetime import timedelta
     from simulation.broadcast import broadcast_event
+    from routing.scheduler import run_scheduler_cycle
 
-    minutes = int(request.data.get('minutes', 5))
+    step_mode = request.data.get('step', False)
+    if isinstance(step_mode, str):
+        step_mode = step_mode.lower() == 'true'
 
     state = SimulationState.objects.first()
     if not state:
@@ -35,29 +38,88 @@ def tick(request):
             scenario_name='baseline',
             surge_active=False,
             sim_time=timezone.now(),
-            is_running=True
+            is_running=True,
+            current_stage='wait_reassessment'
         )
-    else:
-        state.sim_time += timedelta(minutes=minutes)
-        state.save()
 
-    waiting = Patient.objects.filter(status='waiting')
+    minutes = int(request.data.get('minutes', 5))
     reassessed = 0
 
-    for patient in waiting:
-        # Check if past reassessment threshold
-        from decision_engine.age_profiles import get_wait_threshold
-        if patient.arrival_time:
-            wait_min = int((state.sim_time - patient.arrival_time).total_seconds() / 60)
-            threshold = get_wait_threshold(patient.age_group, patient.current_priority or 'P4')
-            if threshold > 0 and wait_min >= threshold:
-                run_triage_assessment(patient, trigger='wait_threshold_reached')
-                reassessed += 1
+    if step_mode:
+        active_stage = state.current_stage or 'wait_reassessment'
+        
+        if active_stage == 'wait_reassessment':
+            # Advance clock only at start of the stage cycle
+            state.sim_time += timedelta(minutes=minutes)
+            state.save()
+            
+            waiting = Patient.objects.filter(status='waiting')
+            for patient in waiting:
+                from decision_engine.age_profiles import get_wait_threshold
+                if patient.arrival_time:
+                    wait_min = int((state.sim_time - patient.arrival_time).total_seconds() / 60)
+                    threshold = get_wait_threshold(patient.age_group, patient.current_priority or 'P4')
+                    if threshold > 0 and wait_min >= threshold:
+                        run_triage_assessment(patient, trigger='wait_threshold_reached')
+                        reassessed += 1
+            next_stage = 'io_completion'
+        elif active_stage == 'io_completion':
+            run_scheduler_cycle(stage='io_completion')
+            next_stage = 'priority_aging'
+        elif active_stage == 'priority_aging':
+            run_scheduler_cycle(stage='priority_aging')
+            next_stage = 'core_allocation'
+        else: # core_allocation
+            run_scheduler_cycle(stage='core_allocation')
+            next_stage = 'wait_reassessment'
 
-    # Broadcast simulation event so frontend automatically refreshes
-    broadcast_event('simulation.reset', {'tick': True, 'sim_time': str(state.sim_time)})
+        state.current_stage = next_stage
+        state.save()
+        
+        # Broadcast simulation state update
+        broadcast_event('simulation.reset', {
+            'tick': True, 
+            'sim_time': str(state.sim_time),
+            'stage_executed': active_stage,
+            'next_stage': next_stage,
+            'step_mode': True
+        })
+        
+        return Response({
+            'message': f'Executed simulation stage: {active_stage}',
+            'stage_executed': active_stage,
+            'next_stage': next_stage,
+            'reassessed_count': reassessed,
+            'sim_time': str(state.sim_time)
+        })
+    else:
+        # Full cycle tick
+        state.sim_time += timedelta(minutes=minutes)
+        state.current_stage = 'wait_reassessment'
+        state.save()
 
-    return Response({'message': f'Tick +{minutes}m, reassessed {reassessed} patients'})
+        waiting = Patient.objects.filter(status='waiting')
+        for patient in waiting:
+            from decision_engine.age_profiles import get_wait_threshold
+            if patient.arrival_time:
+                wait_min = int((state.sim_time - patient.arrival_time).total_seconds() / 60)
+                threshold = get_wait_threshold(patient.age_group, patient.current_priority or 'P4')
+                if threshold > 0 and wait_min >= threshold:
+                    run_triage_assessment(patient, trigger='wait_threshold_reached')
+                    reassessed += 1
+
+        run_scheduler_cycle(stage=None)
+        
+        broadcast_event('simulation.reset', {
+            'tick': True, 
+            'sim_time': str(state.sim_time),
+            'step_mode': False
+        })
+        
+        return Response({
+            'message': f'Full tick +{minutes}m, reassessed {reassessed} patients',
+            'sim_time': str(state.sim_time)
+        })
 
 
 @api_view(['POST'])
@@ -92,6 +154,23 @@ def reset(request):
     return Response({'message': 'Simulation reset', 'reset': True})
 
 
+@api_view(['POST'])
+def intake_next(request):
+    """POST /simulation/intake-next/ — Seed the next synthetic patient sequentially."""
+    from .seeder import intake_next_patient
+    patient = intake_next_patient()
+    if patient:
+        return Response({
+            'message': f'Simulated patient intake: {patient.name} ({patient.chief_complaint})',
+            'patient_added': True,
+            'name': patient.name,
+        }, status=status.HTTP_201_CREATED)
+    return Response({
+        'message': 'All 20 synthetic patients have already been seeded.',
+        'patient_added': False,
+    }, status=status.HTTP_200_OK)
+
+
 @api_view(['GET'])
 def sim_status(request):
     """GET /simulation/status/ — Current simulation state."""
@@ -102,5 +181,6 @@ def sim_status(request):
             'surge_active': state.surge_active,
             'is_running': state.is_running,
             'sim_time': state.sim_time,
+            'current_stage': state.current_stage,
         })
     return Response({'running': False, 'surge_active': False})

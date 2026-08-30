@@ -67,6 +67,9 @@ def patient_detail(request, patient_id):
 
     # PATCH — update patient fields
     old_id = patient.patient_identifier
+    old_doctor = patient.assigned_doctor
+    old_status = patient.status
+
     patient.status = request.data.get('status', patient.status)
     patient.name = request.data.get('name', patient.name)
     patient.patient_identifier = request.data.get('patient_identifier', patient.patient_identifier)
@@ -80,7 +83,22 @@ def patient_detail(request, patient_id):
             
     patient.sex = request.data.get('sex', patient.sex)
     patient.relevant_history = request.data.get('relevant_history', patient.relevant_history)
+    patient.assigned_doctor = request.data.get('assigned_doctor', patient.assigned_doctor)
+
+    # Set last_attended_time if assigned doctor or status changed to in_progress
+    from simulation.models import SimulationState
+    from django.utils import timezone
+    sim_state = SimulationState.objects.first()
+    current_time = sim_state.sim_time if (sim_state and sim_state.is_running and sim_state.sim_time) else timezone.now()
+
+    if (patient.assigned_doctor and patient.assigned_doctor != old_doctor) or (patient.status == 'in_progress' and old_status != 'in_progress'):
+        patient.last_attended_time = current_time
+
     patient.save()
+
+    # Recalculate resource utilization
+    from routing.scheduler import recalculate_resource_occupancy
+    recalculate_resource_occupancy()
 
     # If identifier changed and is resolved, run reassessment to incorporate history
     id_changed = (old_id != patient.patient_identifier)
@@ -207,6 +225,7 @@ def patient_lookup(request):
             'status': p.status,
             'latest_vitals': vitals_data,
             'assessments': assessments_data,
+            'assigned_doctor': p.assigned_doctor,
         })
 
     return Response({
@@ -216,6 +235,128 @@ def patient_lookup(request):
             'age': latest.age,
             'sex': latest.sex,
             'relevant_history': latest.relevant_history,
+            'assigned_doctor': latest.assigned_doctor,
         },
         'past_records': past_records
     })
+
+
+@api_view(['POST'])
+def mark_under_scan(request, patient_id):
+    """POST /patients/<id>/mark-under-scan/ — Marks patient as currently undergoing scan (blocks from CPU/doctor scheduling)"""
+    try:
+        patient = Patient.objects.get(id=patient_id)
+    except Patient.DoesNotExist:
+        return Response({'error': 'Patient not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    from simulation.models import SimulationState
+    from django.utils import timezone
+    sim_state = SimulationState.objects.first()
+    current_time = sim_state.sim_time if (sim_state and sim_state.is_running and sim_state.sim_time) else timezone.now()
+
+    patient.under_scan = True
+    patient.scheduler_state = 'blocked'
+    patient.dynamic_priority_score = 0.0
+    patient.last_attended_time = current_time
+    patient.save(update_fields=['under_scan', 'scheduler_state', 'dynamic_priority_score', 'last_attended_time'])
+
+    from routing.scheduler import recalculate_resource_occupancy
+    recalculate_resource_occupancy()
+
+    AuditEvent.log(
+        event_type='scan_initiated',
+        actor_type='clinician',
+        actor_id='clinician-1',
+        patient_id=patient.id,
+        new_state={'under_scan': True, 'scheduler_state': 'blocked'},
+        trigger='manual_scan_order'
+    )
+
+    from simulation.broadcast import broadcast_event
+    broadcast_event('patient.updated', {'patient_id': str(patient.id), 'type': 'scan_started'})
+
+    from patients.serializers import PatientDetailSerializer
+    return Response(PatientDetailSerializer(patient).data)
+
+
+@api_view(['POST'])
+def submit_scan_reports(request, patient_id):
+    """POST /patients/<id>/submit-scan-reports/ — Manual scan reports submission, triggers AI re-evaluation"""
+    try:
+        patient = Patient.objects.get(id=patient_id)
+    except Patient.DoesNotExist:
+        return Response({'error': 'Patient not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    scan_findings = request.data.get('scan_findings', '')
+    scan_type = request.data.get('scan_type', 'Diagnostic Scan')
+
+    if not scan_findings:
+        # Generate default reports based on chief complaint if not provided
+        from routing.scheduler import generate_simulated_report
+        scan_findings = generate_simulated_report(patient.chief_complaint, patient.scenario_tag)
+
+    from simulation.models import SimulationState
+    from django.utils import timezone
+    sim_state = SimulationState.objects.first()
+    current_time = sim_state.sim_time if (sim_state and sim_state.is_running and sim_state.sim_time) else timezone.now()
+
+    patient.under_scan = False
+    patient.scheduler_state = 'ready'
+    patient.scan_reports = scan_findings
+    patient.last_attended_time = current_time
+
+    # Trigger AI report re-evaluation
+    from decision_engine.ai_assistant import reevaluate_reports_ai
+    ai_res = reevaluate_reports_ai(patient.chief_complaint, scan_type, scan_findings)
+
+    old_priority = patient.current_priority
+    new_priority = ai_res.get("priority", "P4")
+
+    patient.current_priority = new_priority
+    patient.current_destination = "general_emergency" if ai_res.get("confidence", 1.0) < 0.60 else (patient.current_destination or "general_emergency")
+    patient.current_queue = patient.current_destination
+    
+    # Calculate boost and dynamic priority score
+    prio_base = {"P1": 0.90, "P2": 0.70, "P3": 0.50, "P4": 0.30, "P5": 0.10}
+    base_score = prio_base.get(new_priority, 0.10)
+    
+    # Add unblocked boost
+    patient.dynamic_priority_score = min(2.0, base_score + 0.25)
+    patient.save(update_fields=['under_scan', 'scheduler_state', 'scan_reports', 'current_priority', 'current_destination', 'current_queue', 'dynamic_priority_score', 'last_attended_time'])
+
+    from routing.scheduler import recalculate_resource_occupancy
+    recalculate_resource_occupancy()
+
+    # Log audit event
+    AuditEvent.log(
+        event_type='scan_completed',
+        actor_type='clinician',
+        actor_id='clinician-1',
+        patient_id=patient.id,
+        old_state={'priority': old_priority, 'under_scan': True},
+        new_state={
+            'priority': new_priority, 
+            'under_scan': False, 
+            'scan_reports': scan_findings[:100] + "...",
+            'findings_status': ai_res.get("findings_status")
+        },
+        trigger='manual_scan_completion',
+        confidence=ai_res.get("confidence", 0.90)
+    )
+
+    # Re-create QueueEntry
+    from django.utils import timezone
+    from queues.models import QueueEntry
+    QueueEntry.objects.filter(patient=patient, active=True).update(active=False, exited_at=timezone.now())
+    QueueEntry.objects.create(
+        patient=patient,
+        queue_type=patient.current_queue or "general_emergency",
+        priority=new_priority,
+        active=True
+    )
+
+    from simulation.broadcast import broadcast_event
+    broadcast_event('patient.updated', {'patient_id': str(patient.id), 'type': 'scan_completed'})
+
+    from patients.serializers import PatientDetailSerializer
+    return Response(PatientDetailSerializer(patient).data)

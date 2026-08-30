@@ -19,6 +19,8 @@ export const getAssessments=(id)     => api.get(`/patients/${id}/assessments/`)
 export const assessPatient  = (data) => api.post('/triage/assess/', data)
 export const reassessPatient= (data) => api.post('/triage/reassess/', data)
 export const aiAnalyze      = (data) => api.post('/triage/ai-analyze/', data)
+export const getAiMode      = ()     => api.get('/triage/ai-mode/')
+export const toggleAiMode   = (data) => api.post('/triage/ai-mode/', data)
 
 // ── Queue ─────────────────────────────────────────────────────
 export const getLiveQueue  = ()  => api.get('/queues/live/')
@@ -49,6 +51,7 @@ export const triggerDeterioration = (data) => api.post('/simulation/deteriorate/
 export const triggerSurge    = ()     => api.post('/simulation/surge/')
 export const resetSimulation = ()     => api.post('/simulation/reset/')
 export const getSimStatus    = ()     => api.get('/simulation/status/')
+export const intakeNextSimulation = () => api.post('/simulation/intake-next/')
 
 // ── WebSocket ─────────────────────────────────────────────────
 export const WS_URL = `${WS_BASE}/ws/ed/live/`

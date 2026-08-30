@@ -28,7 +28,10 @@ class LiveQueuePatientSerializer(serializers.ModelSerializer):
             'id', 'name', 'patient_identifier', 'age', 'age_group', 'chief_complaint', 'history_available',
             'current_priority', 'current_queue', 'current_destination',
             'status', 'scenario_tag', 'arrival_time',
-            'wait_minutes', 'latest_assessment', 'latest_vitals'
+            'wait_minutes', 'latest_assessment', 'latest_vitals',
+            'assigned_doctor', 'under_scan', 'scan_reports',
+            'dynamic_priority_score', 'degradation_rate', 'scheduler_state',
+            'last_attended_time'
         ]
 
     def get_wait_minutes(self, obj):

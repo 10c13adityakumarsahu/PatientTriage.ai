@@ -62,6 +62,26 @@ SYNTHETIC_PATIENTS = [
             "mental_status": "alert"
         }
     },
+    # Casualty / John Doe trauma case (no name, unknown history, obvious visual injury)
+    {
+        "scenario_tag": "trauma_casualty",
+        "name": "John Doe (Casualty)", "patient_identifier": "91-0000-0000-0000",
+        "age": 35, "sex": "U",
+        "chief_complaint": "Trauma casualty: Unconscious, found on roadside after motor vehicle crash. Multiple visible facial lacerations, active bleeding from scalp, right leg visibly deformed.",
+        "history_available": False,
+        "relevant_history": "",
+        "minutes_ago": 12,
+        "vitals": {
+            "heart_rate": 115, "systolic_bp": 90, "diastolic_bp": 55,
+            "spo2": 89, "respiratory_rate": 28, "temperature": 36.6,
+            "mental_status": "unresponsive"
+        },
+        "deterioration_vitals": {
+            "heart_rate": 135, "systolic_bp": 72, "diastolic_bp": 45,
+            "spo2": 82, "respiratory_rate": 34, "temperature": 36.2,
+            "mental_status": "unresponsive"
+        }
+    },
     # 4. Pediatric patient — age-aware assessment
     {
         "scenario_tag": "pediatric",
@@ -323,7 +343,7 @@ RESOURCES_SEED = [
 
 def seed_baseline():
     """
-    Create 20 synthetic patients with baseline scenario.
+    Create baseline scenario with 3 initial synthetic patients.
     Deterministic — same patients every time seed is called on a clean DB.
     """
     now = timezone.now()
@@ -345,7 +365,7 @@ def seed_baseline():
     )
 
     created_patients = []
-    for patient_orig in SYNTHETIC_PATIENTS:
+    for patient_orig in SYNTHETIC_PATIENTS[:3]:
         patient_data = patient_orig.copy()
         arrival_time = now - timedelta(minutes=patient_data.pop('minutes_ago', 0))
         vitals_data = patient_data.pop('vitals', None)
@@ -409,6 +429,80 @@ def seed_baseline():
     return created_patients
 
 
+def intake_next_patient():
+    """
+    Seed the next patient from the SYNTHETIC_PATIENTS list that isn't already in the database.
+    Allows testing/walkthroughs to simulate individual patient intake events sequentially.
+    """
+    now = timezone.now()
+    existing_tags = set(Patient.objects.filter(scenario_tag__isnull=False).values_list('scenario_tag', flat=True))
+
+    next_patient_data = None
+    for p in SYNTHETIC_PATIENTS:
+        if p['scenario_tag'] not in existing_tags:
+            next_patient_data = p
+            break
+
+    if not next_patient_data:
+        return None  # All 20 synthetic patients have been seeded!
+
+    # Seed this single patient
+    patient_data = next_patient_data.copy()
+    arrival_time = now - timedelta(minutes=patient_data.pop('minutes_ago', 0))
+    vitals_data = patient_data.pop('vitals', None)
+    deterioration_vitals = patient_data.pop('deterioration_vitals', None)
+
+    patient = Patient.objects.create(
+        arrival_time=arrival_time,
+        status='waiting',
+        **patient_data,
+    )
+
+    if patient.age < 18:
+        patient.age_group = 'pediatric'
+    elif patient.age >= 65:
+        patient.age_group = 'geriatric'
+    else:
+        patient.age_group = 'adult'
+    patient.save(update_fields=['age_group'])
+
+    if vitals_data:
+        VitalReading.objects.create(
+            patient=patient,
+            recorded_at=arrival_time + timedelta(minutes=3),
+            **vitals_data
+        )
+
+    from decision_engine.normalizer import normalize_symptoms
+    tokens, flags = normalize_symptoms(patient.chief_complaint)
+    PatientNote.objects.create(
+        patient=patient,
+        raw_text=patient.chief_complaint,
+        normalized_symptoms=tokens,
+        extracted_flags=flags,
+        source='intake',
+    )
+
+    # Run initial triage assessment
+    run_triage_assessment(patient, trigger='initial_assessment')
+
+    if deterioration_vitals:
+        patient._deterioration_vitals = deterioration_vitals
+
+    AuditEvent.log(
+        event_type='simulation_patient_created',
+        actor_type='simulation',
+        patient_id=patient.id,
+        new_state={
+            'scenario_tag': patient.scenario_tag,
+            'age': patient.age,
+            'age_group': patient.age_group,
+        },
+        trigger='intake_next_patient',
+    )
+    return patient
+
+
 def trigger_deterioration(patient_id):
     """Apply deterioration vitals to a patient and reassess."""
     try:
@@ -435,6 +529,16 @@ def trigger_deterioration(patient_id):
                 'spo2': max(82, (latest.spo2 or 97) - 8),
                 'respiratory_rate': min(40, (latest.respiratory_rate or 18) + 12),
                 'temperature': min(40.0, (latest.temperature or 37.0) + 0.8),
+                'mental_status': 'confused',
+            }
+        else:
+            deterioration_vitals = {
+                'heart_rate': 125,
+                'systolic_bp': 85,
+                'diastolic_bp': 55,
+                'spo2': 88,
+                'respiratory_rate': 28,
+                'temperature': 38.5,
                 'mental_status': 'confused',
             }
 

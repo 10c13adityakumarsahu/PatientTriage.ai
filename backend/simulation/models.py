@@ -10,6 +10,7 @@ class SimulationState(models.Model):
     sim_time = models.DateTimeField(null=True, blank=True)
     seed = models.IntegerField(default=42)
     is_running = models.BooleanField(default=False)
+    current_stage = models.CharField(max_length=50, default='wait_reassessment')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

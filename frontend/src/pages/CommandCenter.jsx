@@ -1,18 +1,19 @@
-/** CommandCenter — primary ED overview page
- *  Header · Summary Cards · Live Queue · Alerts · Resources
- */
+/** Command Center: live ED board, intake, and clinician actions. */
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getLiveQueue, getQueueStats, getAlerts, getResources, createPatient, lookupPatient, addVitals, addObservation, assessPatient, reassessPatient, aiAnalyze, api } from '../api'
+import { getLiveQueue, getQueueStats, getAlerts, getResources, createPatient, lookupPatient, addVitals, addObservation, assessPatient, reassessPatient, aiAnalyze, getAiMode, api } from '../api'
 import { useStore } from '../store'
 import { useWebSocket } from '../useWebSocket'
 import PriorityBadge from '../components/PriorityBadge'
 import ConfidenceBadge from '../components/ConfidenceBadge'
+import OverrideDialog from '../components/OverrideDialog'
 import AlertCard from '../components/AlertCard'
 import ResourceCapacityCard from '../components/ResourceCapacityCard'
 import SimulationControls from '../components/SimulationControls'
 import TopNavbar from '../components/TopNavbar'
-import { Activity, Users, AlertTriangle, BarChart2, RefreshCw, Zap, Plus, Search, Brain, FileText, CheckCircle, ChevronRight, X, History, Pencil, User, LayoutGrid, Settings, Sparkles, Hourglass } from 'lucide-react'
+import { CareSequenceCompact } from '../components/CareSequence'
+import { getCareSequence, DISPOSITION_STATUSES } from '../workflow'
+import { Activity, Users, AlertTriangle, BarChart2, RefreshCw, Zap, Plus, Search, Brain, FileText, CheckCircle, ChevronRight, X, History, Pencil, User, LayoutGrid, Settings, Sparkles, Hourglass, WifiOff, ShieldAlert, Database } from 'lucide-react'
 
 const WAIT_WARN = 45   // minutes before yellow
 const WAIT_CRIT = 90   // minutes before orange
@@ -21,6 +22,15 @@ function formatWait(min) {
   if (min == null) return '—'
   if (min < 60) return `${min}m`
   return `${Math.floor(min / 60)}h ${min % 60}m`
+}
+
+function expectedWaitText(priority) {
+  if (priority === 'P1') return 'Immediate'
+  if (priority === 'P2') return '< 10m'
+  if (priority === 'P3') return '< 30m'
+  if (priority === 'P4') return '< 60m'
+  if (priority === 'P5') return '< 120m'
+  return '—'
 }
 
 function waitClass(min) {
@@ -41,17 +51,16 @@ function formatDept(dept) {
 }
 
 function getAssignedDoc(patient) {
-  const overrideBy = patient.latest_assessment?.clinician_override?.overridden_by;
-  if (overrideBy) {
-    return overrideBy;
-  }
-  
   const dept = (patient.current_destination || patient.current_queue || '').toLowerCase();
-  if (dept.includes('cardiac')) return 'Dr. Kapoor (Cardio)';
-  if (dept.includes('pediatr')) return 'Dr. Sharma (Peds)';
-  if (dept.includes('ortho') || dept.includes('trauma')) return 'Dr. Roy (Ortho)';
-  if (dept.includes('respir')) return 'Dr. Verma (Chest)';
-  return 'Dr. Mehta (Duty)';
+  const comp = (patient.chief_complaint || '').toLowerCase();
+
+  if (dept.includes('cardiac') || comp.includes('chest') || comp.includes('cardiac')) return 'Dr. Kapoor';
+  if (dept.includes('pediatr') || comp.includes('child') || comp.includes('baby') || patient.age_group === 'pediatric') return 'Dr. Sharma';
+  if (dept.includes('ortho') || dept.includes('trauma') || comp.includes('fracture') || comp.includes('accident') || comp.includes('injured') || comp.includes('fall') || comp.includes('laceration')) return 'Dr. Roy';
+  if (dept.includes('respir') || comp.includes('breath') || comp.includes('copd') || comp.includes('cough')) return 'Dr. Patel';
+  if (dept.includes('neurolog') || comp.includes('stroke') || comp.includes('weakness') || comp.includes('slurred') || comp.includes('confusion')) return 'Dr. Iyer';
+  if (dept.includes('resus')) return 'Dr. Joshi';
+  return 'Dr. Sen';
 }
 
 function vitalStatus(key, value, ageGroup) {
@@ -64,6 +73,8 @@ function vitalStatus(key, value, ageGroup) {
   if (key === 'respiratory_rate' && (value > 20 || value < 12)) return 'abnormal'
   if (key === 'systolic_bp' && (value < 70 || value > 180)) return 'critical'
   if (key === 'systolic_bp' && (value < 90 || value > 160)) return 'abnormal'
+  if (key === 'temperature' && (value > 39.0 || value < 35.0 || value < 20.0)) return 'critical'
+  if (key === 'temperature' && (value > 37.9 || value < 36.1)) return 'abnormal'
   return ''
 }
 
@@ -145,6 +156,12 @@ export default function CommandCenter() {
   const [loading, setLoading] = useState(true)
 
   const [now, setNow] = useState(new Date())
+
+  // AI Mode state (FULL_AI | RAG_ONLY | STATIC)
+  const [aiMode, setAiMode] = useState(null)
+
+  // Override dialog target
+  const [overrideTarget, setOverrideTarget] = useState(null)  // patient object
 
   // Intake State
   const [showIntake, setShowIntake] = useState(false)
@@ -262,6 +279,7 @@ export default function CommandCenter() {
       chief_complaint: '',
       history_available: false,
       relevant_history: '',
+      assigned_doctor: '',
     })
     setLookupResult({ exists: false, isTemp: true })
     setSearchId(tempId)
@@ -282,6 +300,7 @@ export default function CommandCenter() {
       chief_complaint: '',
       history_available: true,
       relevant_history: '',
+      assigned_doctor: '',
     })
     setLookupResult(null)
     setIsEmergency(false)
@@ -306,6 +325,7 @@ export default function CommandCenter() {
       chief_complaint: '',
       history_available: false,
       relevant_history: '',
+      assigned_doctor: '',
     })
     setLookupResult({ exists: false, isTemp: true })
     setShowIntake(true)
@@ -319,6 +339,7 @@ export default function CommandCenter() {
     chief_complaint: '',
     history_available: true,
     relevant_history: '',
+    assigned_doctor: '',
   })
 
   async function handleSearch() {
@@ -327,6 +348,10 @@ export default function CommandCenter() {
     try {
       const res = await lookupPatient(searchId)
       if (res.data.exists) {
+        // Auto-assign doctor if a doctor exists in past history records
+        const pastRecs = res.data.past_records || [];
+        const pastDoc = pastRecs.map(r => r.assigned_doctor).filter(Boolean)[0] || '';
+
         setIntakeData(prev => ({
           ...prev,
           name: res.data.demographics.name || '',
@@ -334,6 +359,7 @@ export default function CommandCenter() {
           age: res.data.demographics.age || '',
           sex: res.data.demographics.sex || 'M',
           relevant_history: res.data.demographics.relevant_history || '',
+          assigned_doctor: pastDoc || res.data.demographics.assigned_doctor || '',
         }))
         setLookupResult({ exists: true })
         setIsLocked(false)
@@ -345,6 +371,7 @@ export default function CommandCenter() {
           age: '',
           sex: 'M',
           relevant_history: '',
+          assigned_doctor: '',
         }))
         setLookupResult({ exists: false, isTemp: false })
         setIsLocked(true)
@@ -423,6 +450,21 @@ export default function CommandCenter() {
     setLoading(false)
   }, [])
 
+  // Poll AI mode status on load and every 30s
+  useEffect(() => {
+    const fetchAiMode = async () => {
+      try {
+        const res = await getAiMode()
+        setAiMode(res.data)
+      } catch {
+        setAiMode({ mode: 'STATIC', gemini_available: false, banner: 'AI mode status unavailable. Using static scoring.' })
+      }
+    }
+    fetchAiMode()
+    const t = setInterval(fetchAiMode, 30000)
+    return () => clearInterval(t)
+  }, [])
+
   const handleEscalate = async (e, patient) => {
     e.stopPropagation()
     const prioMap = { 'P5': 'P4', 'P4': 'P3', 'P3': 'P2', 'P2': 'P1', 'P1': 'P1' }
@@ -444,28 +486,34 @@ export default function CommandCenter() {
 
   const handleDrop = async (e, patient) => {
     e.stopPropagation()
-    if (!window.confirm("Are you sure you want to discharge/drop this patient from the queue?")) return
+    if (!window.confirm('Discharge this patient from the ED queue?')) return
     try {
-      await api.patch(`/patients/${patient.id}/`, {
-        status: 'discharged'
-      })
-      alert("Patient discharged and dropped from queue!");
+      await api.patch(`/patients/${patient.id}/`, { status: 'discharged' })
       refresh()
     } catch {
-      alert("Failed to drop patient");
+      alert('Failed to discharge patient.')
     }
   }
 
   const handleStartVisit = async (e, patient) => {
     e.stopPropagation()
     try {
-      await api.patch(`/patients/${patient.id}/`, {
-        status: 'in_progress'
-      })
-      alert("Patient visit started!");
+      await api.patch(`/patients/${patient.id}/`, { status: 'in_progress' })
       refresh()
     } catch {
-      alert("Failed to start visit");
+      alert('Failed to start visit.')
+    }
+  }
+
+  const handleDisposition = async (e, patient, status) => {
+    e.stopPropagation()
+    const labels = { admitted: 'admit', referred: 'refer', discharged: 'discharge' }
+    if (!window.confirm(`Mark this patient as ${labels[status]}?`)) return
+    try {
+      await api.patch(`/patients/${patient.id}/`, { status })
+      refresh()
+    } catch {
+      alert('Failed to update disposition.')
     }
   }
 
@@ -497,37 +545,39 @@ export default function CommandCenter() {
   const p1p2 = queueStats?.p1_p2_count ?? queue.filter(p => p.current_priority === 'P1' || p.current_priority === 'P2').length
 
   const criticalPts = queue.filter(p => (p.current_priority === 'P1' || p.current_priority === 'P2') && p.status === 'waiting')
-  
-  const deterioratingPts = queue.filter(p => 
-    (p.scenario_tag === 'deteriorating' || activeAlerts.some(a => a.patient_id === p.id && a.alert_type === 'deterioration')) && 
-    p.status === 'waiting' && 
-    p.current_priority !== 'P1' && 
+
+  const deterioratingPts = queue.filter(p =>
+    (p.scenario_tag === 'deteriorating' || activeAlerts.some(a => a.patient_id === p.id && a.alert_type === 'deterioration')) &&
+    p.status === 'waiting' &&
+    p.current_priority !== 'P1' &&
     p.current_priority !== 'P2'
   )
-  
+
   const vitalsPendingPts = queue.filter(p => !p.latest_vitals && p.status === 'waiting')
-  
-  const testsSuggestedPts = queue.filter(p => 
-    p.latest_vitals && 
-    p.latest_assessment?.ai_decision_support?.preliminary_tests?.length > 0 && 
-    p.status === 'waiting' && 
-    p.current_priority !== 'P1' && 
+
+  const testsSuggestedPts = queue.filter(p =>
+    p.latest_vitals &&
+    p.latest_assessment?.ai_decision_support?.preliminary_tests?.length > 0 &&
+    p.status === 'waiting' &&
+    p.current_priority !== 'P1' &&
     p.current_priority !== 'P2'
   )
-  
+
   const surgePts = queue.filter(p => p.scenario_tag === 'surge' && p.status === 'waiting')
-  
+
   const inVisitPts = queue.filter(p => p.status === 'in_progress')
-  
-  const completedPts = queue.filter(p => p.status === 'discharged' || p.status === 'admitted')
-  
-  const generalPts = queue.filter(p => 
-    p.status === 'waiting' && 
-    p.latest_vitals && 
-    (!p.latest_assessment?.ai_decision_support?.preliminary_tests || p.latest_assessment?.ai_decision_support?.preliminary_tests?.length === 0) && 
-    p.current_priority !== 'P1' && 
-    p.current_priority !== 'P2' && 
-    p.scenario_tag !== 'deteriorating' && 
+
+  const completedPts = queue.filter(p => DISPOSITION_STATUSES.includes(p.status))
+  const scanPts = queue.filter(p => getCareSequence(p).activeIndex === 1)
+  const inQueuePts = queue.filter(p => getCareSequence(p).activeIndex === 2)
+
+  const generalPts = queue.filter(p =>
+    p.status === 'waiting' &&
+    p.latest_vitals &&
+    (!p.latest_assessment?.ai_decision_support?.preliminary_tests || p.latest_assessment?.ai_decision_support?.preliminary_tests?.length === 0) &&
+    p.current_priority !== 'P1' &&
+    p.current_priority !== 'P2' &&
+    p.scenario_tag !== 'deteriorating' &&
     p.scenario_tag !== 'surge'
   )
 
@@ -548,19 +598,19 @@ export default function CommandCenter() {
         )}
 
         {/* Subtable Container (Borderless) */}
-        <div 
-          style={{ 
-            background: 'transparent', 
+        <div
+          style={{
+            background: 'transparent',
             display: 'flex',
             flexDirection: 'column'
           }}
         >
           {/* Subtable Header */}
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: '1fr 180px 80px', 
-            gap: '12px', 
-            padding: '8px 0', 
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 180px 80px',
+            gap: '12px',
+            padding: '8px 0',
             borderBottom: '2px solid var(--border)',
             fontSize: '0.72rem',
             fontWeight: 700,
@@ -574,12 +624,12 @@ export default function CommandCenter() {
           </div>
 
           {/* Subtable Body (Scrollable) */}
-          <div 
-            style={{ 
-              overflowY: 'auto', 
-              display: 'flex', 
-              flexDirection: 'column', 
-              maxHeight: 'calc(100vh - 350px)' 
+          <div
+            style={{
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              maxHeight: 'calc(100vh - 350px)'
             }}
             className="left-pane" // Custom scrollbar
           >
@@ -599,11 +649,11 @@ export default function CommandCenter() {
                     onClick={() => navigate(`/patient/${p.id}`)}
                     className="queue-table-row"
                     title="Click to see full details"
-                    style={{ 
-                      display: 'grid', 
-                      gridTemplateColumns: '1fr 180px 80px', 
-                      gap: '12px', 
-                      alignItems: 'center', 
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 180px 80px',
+                      gap: '12px',
+                      alignItems: 'center',
                       padding: '12px 0',
                       borderBottom: '1px solid var(--border)',
                       cursor: 'pointer',
@@ -618,14 +668,14 @@ export default function CommandCenter() {
                         </span>
                         <PriorityBadge priority={p.current_priority} />
                         {latestAss?.confidence != null && (
-                          <span 
-                            className="badge" 
-                            style={{ 
-                              background: 'rgba(124, 58, 237, 0.05)', 
-                              color: 'var(--accent)', 
-                              border: '1px solid rgba(124, 58, 237, 0.15)', 
-                              fontSize: '0.7rem', 
-                              padding: '1px 5px', 
+                          <span
+                            className="badge"
+                            style={{
+                              background: 'rgba(124, 58, 237, 0.05)',
+                              color: 'var(--accent)',
+                              border: '1px solid rgba(124, 58, 237, 0.15)',
+                              fontSize: '0.7rem',
+                              padding: '1px 5px',
                               borderRadius: '4px',
                               fontWeight: 700,
                               display: 'inline-flex',
@@ -638,7 +688,7 @@ export default function CommandCenter() {
                           </span>
                         )}
                       </div>
-                      
+
                       {/* Dept & Assigned Doctor Info */}
                       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', fontSize: '0.78rem', marginTop: '2px' }}>
                         <span>
@@ -667,15 +717,15 @@ export default function CommandCenter() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden', minWidth: '170px' }}>
                       {latestAss?.ai_decision_support?.preliminary_tests?.length > 0 ? (
                         latestAss.ai_decision_support.preliminary_tests.slice(0, 2).map((test, i) => (
-                          <span 
-                            key={i} 
-                            className="badge" 
-                            style={{ 
-                              background: 'rgba(59, 130, 246, 0.06)', 
-                              color: '#3b82f6', 
-                              border: '1px solid rgba(59, 130, 246, 0.15)', 
-                              fontSize: '0.65rem', 
-                              padding: '2px 6px', 
+                          <span
+                            key={i}
+                            className="badge"
+                            style={{
+                              background: 'rgba(59, 130, 246, 0.06)',
+                              color: '#3b82f6',
+                              border: '1px solid rgba(59, 130, 246, 0.15)',
+                              fontSize: '0.65rem',
+                              padding: '2px 6px',
                               borderRadius: '3px',
                               textOverflow: 'ellipsis',
                               overflow: 'hidden',
@@ -716,24 +766,27 @@ export default function CommandCenter() {
 
   if (searchTerm) {
     const term = searchTerm.toLowerCase()
-    filteredPatients = filteredPatients.filter(p => 
+    filteredPatients = filteredPatients.filter(p =>
       p.name?.toLowerCase().includes(term) ||
       p.patient_identifier?.toLowerCase().includes(term) ||
       p.chief_complaint?.toLowerCase().includes(term)
     )
   }
 
-  if (filterTab === 'critical') {
-    filteredPatients = filteredPatients.filter(p => p.current_priority === 'P1' || p.current_priority === 'P2')
+  if (filterTab === 'all') {
+    filteredPatients = filteredPatients.filter(p => p.status === 'waiting' || p.status === 'in_progress')
+  } else if (filterTab === 'critical') {
+    filteredPatients = filteredPatients.filter(p => (p.current_priority === 'P1' || p.current_priority === 'P2') && p.status === 'waiting')
   } else if (filterTab === 'vitals_pending') {
-    filteredPatients = filteredPatients.filter(p => {
-      const ass = p.latest_assessment
-      return !ass || !ass.vitals || Object.keys(ass.vitals).length === 0
-    })
+    filteredPatients = filteredPatients.filter(p => getCareSequence(p).activeIndex === 0)
   } else if (filterTab === 'tests_suggested') {
-    filteredPatients = filteredPatients.filter(p => p.latest_assessment?.ai_decision_support?.preliminary_tests?.length > 0)
+    filteredPatients = filteredPatients.filter(p => getCareSequence(p).activeIndex === 1)
+  } else if (filterTab === 'in_queue') {
+    filteredPatients = filteredPatients.filter(p => getCareSequence(p).activeIndex === 2)
   } else if (filterTab === 'active_visits') {
     filteredPatients = filteredPatients.filter(p => p.status === 'in_progress')
+  } else if (filterTab === 'completed') {
+    filteredPatients = filteredPatients.filter(p => DISPOSITION_STATUSES.includes(p.status))
   }
 
   // 2. Sorting
@@ -755,23 +808,83 @@ export default function CommandCenter() {
   return (
     <div className="app-container" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--bg-base)', width: '100%' }}>
       {/* Top Navbar */}
-      <TopNavbar 
-        activeTab="queue" 
-        surgeActive={surgeActive} 
-        loading={loading} 
-        onRefresh={refresh} 
-        onNewIntake={handleNewIntakeClick} 
+      <TopNavbar
+        activeTab="queue"
+        surgeActive={surgeActive}
+        loading={loading}
+        onRefresh={refresh}
+        onNewIntake={handleNewIntakeClick}
       />
+
+      {/* AI Mode Banner */}
+      {aiMode && aiMode.mode !== 'FULL_AI' && (
+        <div style={{
+          background: aiMode.mode === 'RAG_ONLY' ? 'rgba(245, 158, 11, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+          borderBottom: `1px solid ${aiMode.mode === 'RAG_ONLY' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
+          color: aiMode.mode === 'RAG_ONLY' ? '#f59e0b' : '#ef4444',
+          padding: '10px 24px',
+          fontSize: '0.8rem',
+          fontWeight: 600,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {aiMode.mode === 'RAG_ONLY' ? <Database size={16} /> : <WifiOff size={16} />}
+            <span>{aiMode.banner}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '0.72rem', textTransform: 'uppercase', opacity: 0.8 }}>Emergency override advised</span>
+            {aiMode.mode === 'RAG_ONLY' && (
+              <button
+                className="btn btn-outline-danger btn-xs"
+                style={{ fontSize: '0.7rem', padding: '3px 8px', border: '1px solid rgba(239, 68, 68, 0.4)', background: 'transparent', color: '#ef4444' }}
+                onClick={async () => {
+                  if (confirm("Switch to static rule-based scoring (Circuit Breaker)? This disables RAG and uses clinical thresholds only.")) {
+                    try {
+                      const res = await toggleAiMode({ force_static: true });
+                      setAiMode(res.data);
+                      refresh();
+                    } catch {
+                      alert("Failed to force static mode.");
+                    }
+                  }
+                }}
+              >
+                Trigger Circuit Breaker
+              </button>
+            )}
+            {aiMode.force_static && (
+              <button
+                className="btn btn-outline-success btn-xs"
+                style={{ fontSize: '0.7rem', padding: '3px 8px', border: '1px solid rgba(16, 185, 129, 0.4)', background: 'transparent', color: '#10b981' }}
+                onClick={async () => {
+                  try {
+                    const res = await toggleAiMode({ force_static: false });
+                    setAiMode(res.data);
+                    refresh();
+                  } catch {
+                    alert("Failed to restore AI mode.");
+                  }
+                }}
+              >
+                Restore AI Mode
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Main View Area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%', overflow: 'hidden' }}>
         <main className="main-content" style={{ padding: '24px', flex: 1, display: 'flex', gap: '24px', boxSizing: 'border-box', width: '100%', overflow: 'hidden' }}>
           {/* Left Column: Filter & Controls Panel (width: 240px) */}
-          <div style={{ 
-            width: '240px', 
-            flexShrink: 0, 
-            display: 'flex', 
-            flexDirection: 'column', 
+          <div style={{
+            width: '240px',
+            flexShrink: 0,
+            display: 'flex',
+            flexDirection: 'column',
             gap: '20px',
             background: 'var(--bg-card)',
             border: '1px solid var(--border)',
@@ -780,25 +893,25 @@ export default function CommandCenter() {
             boxShadow: 'var(--shadow-sm)',
             height: 'fit-content'
           }}>
-            
+
             {/* Search Input */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Search Patient</label>
               <div style={{ position: 'relative' }}>
-                <input 
-                  type="text" 
-                  placeholder="Search..." 
-                  value={searchTerm} 
-                  onChange={e => setSearchTerm(e.target.value)} 
-                  style={{ 
-                    width: '100%', 
-                    padding: '8px 12px 8px 32px', 
-                    borderRadius: '6px', 
-                    border: '1px solid var(--border)', 
-                    background: 'var(--bg-card)', 
+                <input
+                  type="text"
+                  placeholder="Search..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px 8px 32px',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-card)',
                     color: 'var(--text-primary)',
                     fontSize: '0.85rem'
-                  }} 
+                  }}
                 />
                 <Search size={14} style={{ position: 'absolute', left: '10px', top: '11px', color: 'var(--text-muted)' }} />
               </div>
@@ -808,15 +921,15 @@ export default function CommandCenter() {
             {/* Sorting Controls */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Sort By</label>
-              <select 
-                value={sortBy} 
-                onChange={e => setSortBy(e.target.value)} 
-                style={{ 
-                  width: '100%', 
-                  padding: '8px 12px', 
-                  borderRadius: '6px', 
-                  border: '1px solid var(--border)', 
-                  background: 'var(--bg-card)', 
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-card)',
                   color: 'var(--text-primary)',
                   fontSize: '0.85rem',
                   cursor: 'pointer'
@@ -832,118 +945,164 @@ export default function CommandCenter() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Filter Board</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <button 
-                  onClick={() => setFilterTab('all')} 
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    padding: '10px 12px', 
-                    borderRadius: '6px', 
-                    border: 'none', 
-                    background: filterTab === 'all' ? 'rgba(124, 58, 237, 0.08)' : 'transparent', 
+                <button
+                  onClick={() => setFilterTab('all')}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: filterTab === 'all' ? 'rgba(124, 58, 237, 0.08)' : 'transparent',
                     color: filterTab === 'all' ? 'var(--accent)' : 'var(--text-secondary)',
                     fontWeight: filterTab === 'all' ? 700 : 500,
-                    fontSize: '0.85rem', 
+                    fontSize: '0.85rem',
                     textAlign: 'left',
                     cursor: 'pointer'
                   }}
                 >
                   <span>All Queue</span>
                   <span className="badge" style={{ background: filterTab === 'all' ? 'var(--accent)' : 'var(--border)', color: filterTab === 'all' ? '#fff' : 'var(--text-secondary)' }}>
-                    {queue.length}
+                    {queue.filter(p => p.status === 'waiting' || p.status === 'in_progress').length}
                   </span>
                 </button>
-                
-                <button 
-                  onClick={() => setFilterTab('critical')} 
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    padding: '10px 12px', 
-                    borderRadius: '6px', 
-                    border: 'none', 
-                    background: filterTab === 'critical' ? 'rgba(220, 38, 38, 0.08)' : 'transparent', 
+
+                <button
+                  onClick={() => setFilterTab('critical')}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: filterTab === 'critical' ? 'rgba(220, 38, 38, 0.08)' : 'transparent',
                     color: filterTab === 'critical' ? 'var(--p1)' : 'var(--text-secondary)',
                     fontWeight: filterTab === 'critical' ? 700 : 500,
-                    fontSize: '0.85rem', 
+                    fontSize: '0.85rem',
                     textAlign: 'left',
                     cursor: 'pointer'
                   }}
                 >
                   <span>Critical (P1/P2)</span>
                   <span className="badge" style={{ background: filterTab === 'critical' ? 'var(--p1)' : 'var(--border)', color: filterTab === 'critical' ? '#fff' : 'var(--text-secondary)' }}>
-                    {queue.filter(p => p.current_priority === 'P1' || p.current_priority === 'P2').length}
+                    {queue.filter(p => (p.current_priority === 'P1' || p.current_priority === 'P2') && p.status === 'waiting').length}
                   </span>
                 </button>
 
-                <button 
-                  onClick={() => setFilterTab('vitals_pending')} 
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    padding: '10px 12px', 
-                    borderRadius: '6px', 
-                    border: 'none', 
-                    background: filterTab === 'vitals_pending' ? 'rgba(234, 179, 8, 0.08)' : 'transparent', 
+                <button
+                  onClick={() => setFilterTab('vitals_pending')}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: filterTab === 'vitals_pending' ? 'rgba(234, 179, 8, 0.08)' : 'transparent',
                     color: filterTab === 'vitals_pending' ? 'var(--p3)' : 'var(--text-secondary)',
                     fontWeight: filterTab === 'vitals_pending' ? 700 : 500,
-                    fontSize: '0.85rem', 
+                    fontSize: '0.85rem',
                     textAlign: 'left',
                     cursor: 'pointer'
                   }}
                 >
                   <span>Vitals Pending</span>
                   <span className="badge" style={{ background: filterTab === 'vitals_pending' ? 'var(--p3)' : 'var(--border)', color: filterTab === 'vitals_pending' ? '#fff' : 'var(--text-secondary)' }}>
-                    {queue.filter(p => !p.latest_assessment || !p.latest_assessment.vitals || Object.keys(p.latest_assessment.vitals).length === 0).length}
+                    {queue.filter(p => getCareSequence(p).activeIndex === 0).length}
                   </span>
                 </button>
 
-                <button 
-                  onClick={() => setFilterTab('tests_suggested')} 
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    padding: '10px 12px', 
-                    borderRadius: '6px', 
-                    border: 'none', 
-                    background: filterTab === 'tests_suggested' ? 'rgba(59, 130, 246, 0.08)' : 'transparent', 
+                <button
+                  onClick={() => setFilterTab('tests_suggested')}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: filterTab === 'tests_suggested' ? 'rgba(59, 130, 246, 0.08)' : 'transparent',
                     color: filterTab === 'tests_suggested' ? '#3b82f6' : 'var(--text-secondary)',
                     fontWeight: filterTab === 'tests_suggested' ? 700 : 500,
-                    fontSize: '0.85rem', 
+                    fontSize: '0.85rem',
                     textAlign: 'left',
                     cursor: 'pointer'
                   }}
                 >
-                  <span>Tests Suggested</span>
+                  <span>Scan</span>
                   <span className="badge" style={{ background: filterTab === 'tests_suggested' ? '#3b82f6' : 'var(--border)', color: filterTab === 'tests_suggested' ? '#fff' : 'var(--text-secondary)' }}>
-                    {queue.filter(p => p.latest_assessment?.ai_decision_support?.preliminary_tests?.length > 0).length}
+                    {scanPts.length}
                   </span>
                 </button>
 
-                <button 
-                  onClick={() => setFilterTab('active_visits')} 
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    padding: '10px 12px', 
-                    borderRadius: '6px', 
-                    border: 'none', 
-                    background: filterTab === 'active_visits' ? 'rgba(16, 185, 129, 0.08)' : 'transparent', 
-                    color: filterTab === 'active_visits' ? 'var(--p5)' : 'var(--text-secondary)',
-                    fontWeight: filterTab === 'active_visits' ? 700 : 500,
-                    fontSize: '0.85rem', 
+                <button
+                  onClick={() => setFilterTab('in_queue')}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: filterTab === 'in_queue' ? 'rgba(234, 88, 12, 0.08)' : 'transparent',
+                    color: filterTab === 'in_queue' ? 'var(--p2)' : 'var(--text-secondary)',
+                    fontWeight: filterTab === 'in_queue' ? 700 : 500,
+                    fontSize: '0.85rem',
                     textAlign: 'left',
                     cursor: 'pointer'
                   }}
                 >
-                  <span>Active Visits</span>
+                  <span>In Queue</span>
+                  <span className="badge" style={{ background: filterTab === 'in_queue' ? 'var(--p2)' : 'var(--border)', color: filterTab === 'in_queue' ? '#fff' : 'var(--text-secondary)' }}>
+                    {inQueuePts.length}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setFilterTab('active_visits')}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: filterTab === 'active_visits' ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
+                    color: filterTab === 'active_visits' ? 'var(--p5)' : 'var(--text-secondary)',
+                    fontWeight: filterTab === 'active_visits' ? 700 : 500,
+                    fontSize: '0.85rem',
+                    textAlign: 'left',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <span>Seen</span>
                   <span className="badge" style={{ background: filterTab === 'active_visits' ? 'var(--p5)' : 'var(--border)', color: filterTab === 'active_visits' ? '#fff' : 'var(--text-secondary)' }}>
                     {queue.filter(p => p.status === 'in_progress').length}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setFilterTab('completed')}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: filterTab === 'completed' ? 'rgba(15, 23, 42, 0.08)' : 'transparent',
+                    color: filterTab === 'completed' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    fontWeight: filterTab === 'completed' ? 700 : 500,
+                    fontSize: '0.85rem',
+                    textAlign: 'left',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <span>Admit / Refer / Discharge</span>
+                  <span className="badge" style={{ background: filterTab === 'completed' ? 'var(--text-primary)' : 'var(--border)', color: filterTab === 'completed' ? '#fff' : 'var(--text-secondary)' }}>
+                    {completedPts.length}
                   </span>
                 </button>
               </div>
@@ -956,16 +1115,16 @@ export default function CommandCenter() {
 
           {/* Right Column: Unified Patient Board Table (fills remaining space) */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'hidden' }}>
-            
+
             {/* ED Status Ribbon */}
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '24px', 
-              padding: '12px 18px', 
-              background: 'var(--bg-card)', 
-              border: '1px solid var(--border)', 
-              borderRadius: 'var(--r-md)', 
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '24px',
+              padding: '12px 18px',
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--r-md)',
               fontSize: '0.82rem',
               color: 'var(--text-secondary)',
               flexWrap: 'wrap',
@@ -1001,46 +1160,46 @@ export default function CommandCenter() {
             )}
 
             {/* Main Board Table */}
-            <div 
-              style={{ 
-                background: 'var(--bg-card)', 
+            <div
+              style={{
+                background: 'var(--bg-card)',
                 border: '1px solid var(--border)',
-                borderRadius: 'var(--r-md)', 
-                display: 'flex', 
-                flexDirection: 'column', 
-                flex: 1, 
-                overflow: 'hidden' 
+                borderRadius: 'var(--r-md)',
+                display: 'flex',
+                flexDirection: 'column',
+                flex: 1,
+                overflow: 'hidden'
               }}
             >
               {/* Table Header */}
-              <div style={{ 
-                display: 'grid', 
-                gridTemplateColumns: '1.2fr 80px 1.2fr 1.2fr 75px 110px 240px', 
-                gap: '12px', 
-                padding: '12px 20px', 
-                background: 'var(--bg-hover)', 
-                borderBottom: '1px solid var(--border)', 
-                fontSize: '0.72rem', 
-                fontWeight: 700, 
-                textTransform: 'uppercase', 
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '50px 2.2fr 90px 1.6fr 90px 120px 260px',
+                gap: '12px',
+                padding: '12px 26px 12px 20px',
+                background: 'var(--bg-hover)',
+                borderBottom: '1px solid var(--border)',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                textTransform: 'uppercase',
                 color: 'var(--text-muted)',
                 letterSpacing: '0.04em'
               }}>
+                <span>S.No</span>
                 <span>Patient Info</span>
                 <span>Triage</span>
                 <span>Dept & Clinician</span>
-                <span>Suggested Scans/Tests</span>
                 <span style={{ textAlign: 'right' }}>Wait</span>
                 <span style={{ textAlign: 'center' }}>AI Confidence</span>
                 <span style={{ textAlign: 'right' }}>Actions</span>
               </div>
 
               {/* Table Body (Scrollable) */}
-              <div 
-                className="left-pane" 
-                style={{ 
-                  overflowY: 'auto', 
-                  flex: 1, 
+              <div
+                className="left-pane"
+                style={{
+                  overflowY: 'auto',
+                  flex: 1,
                   maxHeight: 'calc(100vh - 240px)',
                   display: 'flex',
                   flexDirection: 'column',
@@ -1056,37 +1215,8 @@ export default function CommandCenter() {
                     const waitTime = Math.floor((now - new Date(p.arrival_time)) / 60000)
                     const latestAss = p.latest_assessment
                     const isLast = idx === filteredPatients.length - 1
-
-                    const hasVitals = latestAss?.vitals && Object.keys(latestAss.vitals).length > 0
-                    const hasTests = latestAss?.ai_decision_support?.preliminary_tests?.length > 0
-                    const isWaiting = p.status === 'waiting'
-                    const isInProgress = p.status === 'in_progress'
-                    const isDone = p.status === 'discharged' || p.status === 'admitted'
-
-                    // Stage computation:
-                    // 0: Vitals Pending (if no vitals)
-                    // 1: Tests Suggested/Ordered (if vitals exist, and tests suggested)
-                    // 2: In Queue / Waiting (if vitals exist, no tests suggested or tests approved/ordered, status is waiting)
-                    // 3: Being Checked (if status is in_progress)
-                    // 4: Done (if discharged or admitted)
-                    let activeIndex = 0
-                    if (isDone) {
-                      activeIndex = 4
-                    } else if (isInProgress) {
-                      activeIndex = 3
-                    } else if (isWaiting) {
-                      if (hasTests) {
-                        activeIndex = 1
-                      } else {
-                        activeIndex = 2
-                      }
-                    } else if (hasVitals) {
-                      if (hasTests) {
-                        activeIndex = 1
-                      } else {
-                        activeIndex = 2
-                      }
-                    }
+                    const seq = getCareSequence(p, latestAss)
+                    const { activeIndex } = seq
 
                     return (
                       <div
@@ -1095,7 +1225,7 @@ export default function CommandCenter() {
                         className="queue-table-row"
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: '1.2fr 80px 1.2fr 1.2fr 75px 110px 240px',
+                          gridTemplateColumns: '50px 2.2fr 90px 1.6fr 90px 120px 260px',
                           gap: '12px',
                           padding: '14px 20px',
                           alignItems: 'center',
@@ -1104,6 +1234,11 @@ export default function CommandCenter() {
                           background: idx % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-hover)'
                         }}
                       >
+                        {/* Col 0: S.No */}
+                        <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                          {idx + 1}
+                        </div>
+
                         {/* Col 1: Patient Details */}
                         <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                           <span style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1116,18 +1251,7 @@ export default function CommandCenter() {
                             {p.chief_complaint || 'No chief complaint.'}
                           </span>
 
-                          {/* Stepper Pipeline: Vital -> Test -> In Queue -> Checked -> Done */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '6px', flexWrap: 'wrap' }}>
-                            <span style={{ color: activeIndex >= 1 ? 'var(--p5)' : 'var(--p1)', fontWeight: activeIndex === 0 ? 'bold' : 'normal' }}>Vitals</span>
-                            <span>→</span>
-                            <span style={{ color: activeIndex >= 2 ? 'var(--p5)' : activeIndex === 1 ? '#3b82f6' : 'inherit', fontWeight: activeIndex === 1 ? 'bold' : 'normal' }}>Tests</span>
-                            <span>→</span>
-                            <span style={{ color: activeIndex >= 3 ? 'var(--p5)' : activeIndex === 2 ? 'var(--p2)' : 'inherit', fontWeight: activeIndex === 2 ? 'bold' : 'normal' }}>InQueue</span>
-                            <span>→</span>
-                            <span style={{ color: activeIndex >= 4 ? 'var(--p5)' : activeIndex === 3 ? 'var(--p5)' : 'inherit', fontWeight: activeIndex === 3 ? 'bold' : 'normal' }}>Checked</span>
-                            <span>→</span>
-                            <span style={{ color: activeIndex === 4 ? 'var(--p5)' : 'inherit', fontWeight: activeIndex === 4 ? 'bold' : 'normal' }}>Done</span>
-                          </div>
+                          <CareSequenceCompact patient={p} latestAssessment={latestAss} />
                         </div>
 
                         {/* Col 2: Triage Priority */}
@@ -1136,85 +1260,102 @@ export default function CommandCenter() {
                         </div>
 
                         {/* Col 3: Department and Doctor */}
-                        <div style={{ display: 'flex', flexDirection: 'column', fontSize: '0.8rem', color: 'var(--text-primary)' }}>
+                        <div
+                          style={{ display: 'flex', flexDirection: 'column', fontSize: '0.8rem', color: 'var(--text-primary)' }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <span>
                             <strong style={{ color: 'var(--text-secondary)', fontSize: '0.72rem' }}>DEPT:</strong>{' '}
                             <strong>{formatDept(p.current_destination || p.current_queue)}</strong>
                           </span>
-                          <span style={{ marginTop: '2px' }}>
-                            <strong style={{ color: 'var(--text-secondary)', fontSize: '0.72rem' }}>DOC:</strong>{' '}
-                            <span style={{ fontWeight: 600 }}>{getAssignedDoc(p)}</span>
+                          <span style={{ marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <strong style={{ color: 'var(--text-secondary)', fontSize: '0.72rem' }}>DOC:</strong>
+                            <select
+                              value={p.assigned_doctor || getAssignedDoc(p)}
+                              onChange={async (e) => {
+                                const newDocName = e.target.value;
+                                try {
+                                  await api.patch(`/patients/${p.id}/`, {
+                                    assigned_doctor: newDocName
+                                  });
+                                  refresh();
+                                } catch {
+                                  alert("Failed to assign doctor.");
+                                }
+                              }}
+                              style={{
+                                padding: '2px 4px',
+                                fontSize: '0.76rem',
+                                border: '1px solid var(--border)',
+                                borderRadius: '4px',
+                                background: 'var(--bg-card)',
+                                color: 'var(--text-primary)',
+                                fontWeight: 600,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <option value="">Unassigned</option>
+                              {(() => {
+                                const saved = localStorage.getItem('ed_doctors');
+                                const docList = saved ? JSON.parse(saved) : [
+                                  { name: 'Dr. Kapoor' },
+                                  { name: 'Dr. Sharma' },
+                                  { name: 'Dr. Roy' },
+                                  { name: 'Dr. Patel' },
+                                  { name: 'Dr. Sen' },
+                                  { name: 'Dr. Joshi' },
+                                  { name: 'Dr. Gupta' },
+                                  { name: 'Dr. Iyer' }
+                                ];
+                                return docList.map((doc, dIdx) => (
+                                  <option key={dIdx} value={doc.name}>{doc.name}</option>
+                                ));
+                              })()}
+                            </select>
                           </span>
                         </div>
 
-                        {/* Col 4: Suggested Diagnostic Tests */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', overflow: 'hidden' }}>
-                          {latestAss?.ai_decision_support?.preliminary_tests?.length > 0 ? (
-                            latestAss.ai_decision_support.preliminary_tests.slice(0, 2).map((test, i) => (
-                              <span 
-                                key={i} 
-                                className="badge" 
-                                style={{ 
-                                  background: 'rgba(59, 130, 246, 0.05)', 
-                                  color: '#3b82f6', 
-                                  border: '1px solid rgba(59, 130, 246, 0.15)', 
-                                  fontSize: '0.68rem', 
-                                  padding: '1px 6px', 
-                                  borderRadius: '3px',
-                                  whiteSpace: 'nowrap',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  display: 'block',
-                                  width: 'fit-content'
-                                }}
-                                title={test}
-                              >
-                                {test}
-                              </span>
-                            ))
-                          ) : (
-                            <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>None recommended</span>
+                        {/* Col 4: Wait Time */}
+                        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', fontSize: '0.8rem' }}>
+                          <span style={{ fontWeight: 700 }}>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.66rem', marginRight: '4px', fontWeight: 500 }}>Total:</span>
+                            <span className={`patient-card-wait ${waitClass(waitTime)}`}>{formatWait(waitTime)}</span>
+                          </span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.64rem', marginRight: '4px' }}>Target:</span>
+                            <strong>{expectedWaitText(p.current_priority)}</strong>
+                          </span>
+                          {p.last_attended_time && (
+                            <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              Attended: {(() => {
+                                const diffMs = new Date() - new Date(p.last_attended_time);
+                                const diffMin = Math.max(0, Math.floor(diffMs / 60000));
+                                return `${diffMin}m ago`;
+                              })()}
+                            </span>
                           )}
                         </div>
 
-                        {/* Col 5: Wait Time */}
-                        <div style={{ textAlign: 'right' }}>
-                          <span className={`patient-card-wait ${waitClass(waitTime)}`} style={{ fontSize: '0.82rem', fontWeight: 700 }}>
-                            {formatWait(waitTime)}
-                          </span>
-                        </div>
-
                         {/* Col 6: AI Confidence */}
-                        <div style={{ textAlign: 'center' }}>
+                        <div style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
                           {latestAss?.confidence != null ? (
-                            <span 
-                              className="badge" 
-                              style={{ 
-                                background: 'rgba(124, 58, 237, 0.05)', 
-                                color: 'var(--accent)', 
-                                border: '1px solid rgba(124, 58, 237, 0.15)', 
-                                fontSize: '0.74rem', 
-                                padding: '3px 8px', 
-                                borderRadius: '4px',
-                                fontWeight: 700,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px'
-                              }}
-                            >
-                              <Brain size={10} />
-                              {Math.round(latestAss.confidence * 100)}%
-                            </span>
+                            <ConfidenceBadge
+                              confidence={latestAss.confidence}
+                              label={latestAss.confidence_label}
+                              breakdown={latestAss.confidence_breakdown}
+                              showOverride={true}
+                              onOverride={() => setOverrideTarget(p)}
+                            />
                           ) : (
                             <span style={{ color: 'var(--text-muted)', fontSize: '0.76rem' }}>—</span>
                           )}
                         </div>
 
                         {/* Col 7: Context-aware CTA button */}
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
                           {activeIndex === 0 ? (
-                            <button 
-                              className="btn btn-outline-warning btn-sm" 
+                            <button
+                              className="btn btn-outline-warning btn-sm"
                               onClick={(e) => { e.stopPropagation(); navigate(`/patient/${p.id}`) }}
                               style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '4px 8px', minWidth: '110px', justifyContent: 'center' }}
                             >
@@ -1222,62 +1363,141 @@ export default function CommandCenter() {
                               Record Vitals
                             </button>
                           ) : activeIndex === 1 ? (
-                            <button 
-                              className="btn btn-primary btn-sm" 
-                              onClick={async (e) => { 
-                                e.stopPropagation(); 
-                                try {
-                                  await api.post(`/overrides/`, {
-                                    patient_id: p.id,
-                                    override_priority: p.current_priority,
-                                    override_destination: p.current_destination || 'general_medicine',
-                                    override_rationale: "Approved AI suggested diagnostics.",
-                                    overridden_by: "Dr. Admin"
-                                  });
-                                  alert("Suggested preliminary scans approved!");
-                                  refresh();
-                                } catch {
-                                  alert("Failed to approve scans");
-                                }
-                              }}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '4px 8px', minWidth: '110px', justifyContent: 'center' }}
-                            >
-                              <CheckCircle size={12} />
-                              Approve Scans
-                            </button>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
+                              <button
+                                className="btn btn-primary btn-sm"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/patient/${p.id}`) }}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', padding: '4px 8px', width: '150px', justifyContent: 'center' }}
+                              >
+                                <Search size={11} />
+                                Check Recommended Scans
+                              </button>
+
+                              {p.under_scan ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--p3)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                    <span className="spin" style={{ display: 'inline-block', width: '8px', height: '8px', border: '1.5px solid var(--p3)', borderTopColor: 'transparent', borderRadius: '50%' }}></span>
+                                    Under Scan...
+                                  </span>
+                                  <button
+                                    className="btn btn-ghost btn-xs"
+                                    style={{ fontSize: '0.68rem', padding: '2px 6px', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--p5)' }}
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      try {
+                                        await api.post(`/patients/${p.id}/submit-scan-reports/`);
+                                        refresh();
+                                      } catch {
+                                        alert("Failed to complete scan.");
+                                      }
+                                    }}
+                                  >
+                                    Complete Scan
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  className="btn btn-outline-warning btn-xs"
+                                  style={{ fontSize: '0.68rem', padding: '2px 8px', width: '150px', justifyContent: 'center' }}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    try {
+                                      await api.post(`/patients/${p.id}/mark-under-scan/`);
+                                      refresh();
+                                    } catch {
+                                      alert("Failed to update scan status.");
+                                    }
+                                  }}
+                                >
+                                  Mark as Under Scan
+                                </button>
+                              )}
+                            </div>
                           ) : activeIndex === 2 ? (
-                            <button 
-                              className="btn btn-outline-danger btn-sm" 
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                try {
-                                  await reassessPatient({ patient_id: p.id, trigger: 'manual_reassessment' });
-                                  alert("Triage reassessment computed successfully!");
-                                  refresh();
-                                } catch {
-                                  alert("Failed to reassess patient");
-                                }
-                              }}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '4px 8px', minWidth: '110px', justifyContent: 'center' }}
-                            >
-                              <RefreshCw size={12} />
-                              Reassess
-                            </button>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
+                              <button
+                                className="btn btn-primary btn-sm"
+                                onClick={(e) => handleStartVisit(e, p)}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', padding: '4px 8px', minWidth: '110px', justifyContent: 'center' }}
+                              >
+                                Start Visit
+                              </button>
+                              <button
+                                className="btn btn-ghost btn-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm("Update vitals before reassessment? OK to record vitals, Cancel to reassess on current data.")) {
+                                    setActionModal({ isOpen: true, type: 'vitals', patient: p });
+                                  } else {
+                                    (async () => {
+                                      try {
+                                        await reassessPatient({ patient_id: p.id, trigger: 'manual_reassessment' });
+                                        refresh();
+                                      } catch {
+                                        alert("Failed to reassess patient.");
+                                      }
+                                    })();
+                                  }
+                                }}
+                                style={{ fontSize: '0.68rem', padding: '2px 8px' }}
+                              >
+                                Reassess
+                              </button>
+                            </div>
                           ) : activeIndex === 3 ? (
-                            <button 
-                              className="btn btn-outline-success btn-sm" 
-                              onClick={(e) => { e.stopPropagation(); navigate(`/patient/${p.id}`) }}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '4px 8px', minWidth: '110px', justifyContent: 'center' }}
-                            >
-                              Done & History
-                            </button>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end' }}>
+                              <button
+                                className="btn btn-outline-success btn-sm"
+                                onClick={(e) => handleDisposition(e, p, 'admitted')}
+                                style={{ fontSize: '0.7rem', padding: '4px 8px' }}
+                              >
+                                Admit
+                              </button>
+                              <button
+                                className="btn btn-outline-warning btn-sm"
+                                onClick={(e) => handleDisposition(e, p, 'referred')}
+                                style={{ fontSize: '0.7rem', padding: '4px 8px' }}
+                              >
+                                Refer
+                              </button>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={(e) => handleDisposition(e, p, 'discharged')}
+                                style={{ fontSize: '0.7rem', padding: '4px 8px', border: '1px solid var(--border)' }}
+                              >
+                                Discharge
+                              </button>
+                            </div>
                           ) : (
-                            <button 
-                              className="btn btn-ghost btn-sm" 
+                            <button
+                              className="btn btn-ghost btn-sm"
                               onClick={(e) => { e.stopPropagation(); navigate(`/patient/${p.id}`) }}
                               style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '4px 8px', border: '1px solid var(--border)', minWidth: '110px', justifyContent: 'center' }}
                             >
-                              Details
+                              {seq.lastLabel}
+                            </button>
+                          )}
+
+                          {p.status === 'waiting' && (
+                            <button
+                              className="btn btn-outline-danger btn-sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOverrideTarget(p);
+                              }}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontSize: '0.75rem',
+                                padding: '4px 8px',
+                                minWidth: '85px',
+                                justifyContent: 'center',
+                              }}
+                              title="Override AI Priority"
+                            >
+                              <ShieldAlert size={12} />
+                              Override
                             </button>
                           )}
                           <ChevronRight size={14} className="hover-arrow" style={{ color: 'var(--text-muted)', marginLeft: '4px', transition: 'all 0.2s' }} />
@@ -1419,7 +1639,7 @@ export default function CommandCenter() {
                             className="btn btn-primary"
                             style={{ width: '100%', justifyContent: 'center' }}
                             disabled={submitting}
-                            onClick={e => handleSubmitIntake({ preventDefault: () => {} })}
+                            onClick={e => handleSubmitIntake({ preventDefault: () => { } })}
                           >
                             {submitting ? 'Registering…' : 'Continue with this patient →'}
                           </button>
@@ -1722,6 +1942,18 @@ export default function CommandCenter() {
               )}
             </div>
           </div>
+        )}
+
+        {overrideTarget && (
+          <OverrideDialog
+            patient={overrideTarget}
+            currentAssessment={overrideTarget.latest_assessment}
+            onClose={() => setOverrideTarget(null)}
+            onDone={() => {
+              setOverrideTarget(null);
+              refresh();
+            }}
+          />
         )}
       </div>
     </div >

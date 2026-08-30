@@ -80,7 +80,7 @@ export default function OverrideDialog({ patient, currentAssessment, onClose, on
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 'var(--sp-6)' }}>
               You are about to override the AI triage recommendation. Your decision will be logged in the audit trail and takes precedence over AI output.
             </p>
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 'var(--sp-6)', padding: 'var(--sp-3)', background: 'var(--bg-elevated)', borderRadius: 'var(--r-md)', borderLeft: '3px solid var(--p3)' }}>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 'var(--sp-6)', padding: 'var(--sp-3)', background: 'var(--bg-elevated)', borderRadius: 'var(--r-md)', border: '1px solid var(--p3-border)' }}>
               AI recommends. You decide. All overrides are auditable.
             </p>
             <div style={{ display: 'flex', gap: 'var(--sp-3)', justifyContent: 'flex-end' }}>

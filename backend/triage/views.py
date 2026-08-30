@@ -57,6 +57,7 @@ def ai_analyze_symptoms(request):
     relevant_history = request.data.get('relevant_history', '')
     age = request.data.get('age')
     sex = request.data.get('sex', '')
+    age_group = request.data.get('age_group', 'adult')
 
     if age is not None:
         try:
@@ -69,6 +70,23 @@ def ai_analyze_symptoms(request):
         chief_complaint=chief_complaint,
         relevant_history=relevant_history,
         age=age,
-        sex=sex
+        sex=sex,
+        age_group=age_group,
     )
     return Response(result, status=status.HTTP_200_OK)
+
+
+@api_view(['GET', 'POST'])
+def ai_mode_status_view(request):
+    """
+    GET /triage/ai-mode/ — Returns current AI mode status.
+    POST /triage/ai-mode/ — Updates force_static state.
+    """
+    from decision_engine.ai_assistant import ai_mode_status, set_force_static
+    if request.method == 'POST':
+        force_val = request.data.get('force_static')
+        if force_val is not None:
+            set_force_static(bool(force_val))
+            # If turning on static mode or off, log/emit something or just reassess all ready patients if needed.
+            # But just returning the state is perfect.
+    return Response(ai_mode_status(), status=status.HTTP_200_OK)

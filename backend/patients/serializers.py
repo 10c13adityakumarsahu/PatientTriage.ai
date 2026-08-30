@@ -31,7 +31,10 @@ class PatientListSerializer(serializers.ModelSerializer):
             'id', 'name', 'patient_identifier', 'arrival_time', 'age', 'age_group', 'chief_complaint',
             'history_available', 'current_priority', 'current_queue',
             'current_destination', 'status', 'scenario_tag',
-            'wait_minutes', 'latest_vitals', 'created_at', 'updated_at'
+            'wait_minutes', 'latest_vitals', 'created_at', 'updated_at',
+            'assigned_doctor', 'under_scan', 'scan_reports',
+            'dynamic_priority_score', 'degradation_rate', 'scheduler_state',
+            'last_attended_time'
         ]
 
     def get_wait_minutes(self, obj):
@@ -66,7 +69,8 @@ class PatientCreateSerializer(serializers.ModelSerializer):
         model = Patient
         fields = [
             'name', 'patient_identifier', 'age', 'sex', 'chief_complaint',
-            'history_available', 'relevant_history', 'arrival_time', 'scenario_tag'
+            'history_available', 'relevant_history', 'arrival_time', 'scenario_tag',
+            'assigned_doctor'
         ]
 
     def validate_age(self, value):

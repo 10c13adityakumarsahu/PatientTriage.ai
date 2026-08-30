@@ -1,0 +1,604 @@
+{
+  "_meta": {
+    "version": "1.0",
+    "description": "PatientTriage.ai Clinical Knowledge Base — illustrative/synthetic data for prototype only. Not clinically validated.",
+    "domains": 12
+  },
+  "domains": [
+    {
+      "id": "cardiac",
+      "label": "Cardiac / ACS",
+      "keywords": [
+        "chest pain", "chest tightness", "chest discomfort", "crushing chest",
+        "radiating pain", "jaw pain", "arm pain", "palpitations", "heart racing",
+        "myocardial", "acs", "angina", "infarction", "heart attack", "cardiac",
+        "troponin", "ecg", "arrhythmia", "tachycardia", "bradycardia", "afib"
+      ],
+      "complexity": "High",
+      "complexity_rationale": "Potential Acute Coronary Syndrome (ACS) or arrhythmia. Risk of rapid hemodynamic compromise requiring immediate intervention.",
+      "monitoring_criteria": [
+        "12-Lead ECG changes (ST elevation, ST depression, T-wave inversions, new LBBB)",
+        "Serial cardiac troponin I/T levels (elevation indicates myocardial necrosis)",
+        "Pain radiation pattern to jaw, neck, or left arm",
+        "Hemodynamic stability: BP, HR, skin perfusion",
+        "Rhythm monitoring for arrhythmias"
+      ],
+      "preliminary_tests": [
+        "12-Lead ECG (within 10 minutes of arrival — STEMI alert if indicated)",
+        "Serial Cardiac Troponins I or T (0h/2h/6h protocol)",
+        "Chest X-Ray (CXR) — exclude aortic dissection, pneumothorax, pulmonary oedema",
+        "Coagulation panel: PT, INR, aPTT",
+        "Point-of-care BNP or NT-proBNP if heart failure suspected"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Aspirin (Chewable)",
+          "dosage": "300 mg PO (chewed, not swallowed whole)",
+          "indication": "Suspected ACS / STEMI / NSTEMI",
+          "warning": "Contraindicated with active GI bleed, severe bleeding disorders, or documented aspirin allergy. Do not give if aortic dissection is suspected."
+        },
+        {
+          "name": "Nitroglycerin (Sublingual)",
+          "dosage": "0.4 mg SL q5min (max 3 doses)",
+          "indication": "Active anginal chest pain",
+          "warning": "Hold if systolic BP <90 mmHg, HR <50 or >100, or patient used PDE-5 inhibitor (sildenafil/tadalafil) within 24–48h. Can precipitate hypotension."
+        },
+        {
+          "name": "Morphine Sulfate (IV)",
+          "dosage": "2–4 mg IV q5–15 min titrated to pain",
+          "indication": "Refractory chest pain in confirmed ACS only",
+          "warning": "Use with caution — may mask symptoms. Avoid if hypotensive or respiratory compromise. Evidence suggests possible harm in NSTEMI."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Atypical presentations common (fatigue, dyspnea, syncope without classic chest pain). Lower threshold for ACS workup. Higher bleeding risk with anticoagulation.",
+        "pediatric": "ACS rare in children. Consider myocarditis, pericarditis, or congenital cardiac anomaly. Kawasaki disease in <5y with fever.",
+        "adult": "Classic presentation more common. HEART score calculation recommended."
+      },
+      "comorbidity_flags": ["diabetes", "hypertension", "hyperlipidaemia", "smoking", "prior mi", "stent", "bypass", "family history cardiac"],
+      "degradation_rate": 0.015,
+      "criticalness": "Immediate"
+    },
+    {
+      "id": "respiratory",
+      "label": "Respiratory / Airway",
+      "keywords": [
+        "shortness of breath", "breathless", "difficulty breathing", "sob",
+        "wheeze", "wheezing", "asthma", "copd", "respiratory distress",
+        "stridor", "cough", "haemoptysis", "pulmonary", "pneumothorax",
+        "oxygen saturation", "hypoxia", "bronchospasm"
+      ],
+      "complexity": "High",
+      "complexity_rationale": "Acute respiratory compromise. Risk of hypoxic respiratory failure, respiratory arrest, or airway occlusion without prompt intervention.",
+      "monitoring_criteria": [
+        "SpO2 continuously (target >94%; COPD target 88–92%)",
+        "Work of breathing: accessory muscle use, intercostal retractions, nasal flaring",
+        "Respiratory rate and breath sounds (wheeze, crackles, silent chest, stridor)",
+        "Mental status changes (hypoxia and hypercapnia can both cause confusion)",
+        "Peak expiratory flow rate (PEFR) in asthma"
+      ],
+      "preliminary_tests": [
+        "Continuous Pulse Oximetry",
+        "Chest X-Ray (CXR)",
+        "Arterial Blood Gas (ABG) if severe distress or SpO2 <92%",
+        "Complete Blood Count (CBC) — exclude infection",
+        "D-Dimer if PE suspected (Wells Score ≥4)",
+        "CTPA if PE clinically probable"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Salbutamol/Albuterol (Nebulised)",
+          "dosage": "2.5–5 mg nebulised q20min for 3 doses, then q1–4h",
+          "indication": "Bronchospasm, acute asthma, COPD exacerbation",
+          "warning": "Monitor HR — can cause tachycardia, tremor, hypokalaemia. Use with caution in ischaemic heart disease."
+        },
+        {
+          "name": "Ipratropium Bromide (Nebulised)",
+          "dosage": "0.5 mg nebulised q20min for 3 doses",
+          "indication": "COPD exacerbation, moderate–severe asthma",
+          "warning": "Can cause urinary retention in elderly males. Avoid eye contact."
+        },
+        {
+          "name": "Methylprednisolone (IV) / Prednisolone (PO)",
+          "dosage": "IV: 40–125 mg; PO: 40–50 mg once daily for 5 days",
+          "indication": "Systemic corticosteroid for asthma/COPD flare",
+          "warning": "Monitor blood glucose especially in diabetics. Not a bronchodilator — does not provide immediate relief."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Reduced respiratory reserve. Silent chest may indicate near-fatal asthma. COPD exacerbations often triggered by infection. Watch for ventilatory fatigue.",
+        "pediatric": "Asthma most common. Use weight-based dosing. Stridor suggests croup or epiglottitis — do not agitate child. Bronchiolitis (RSV) in <2y.",
+        "adult": "Standard presentation. Assess CURB-65 if pneumonia suspected."
+      },
+      "comorbidity_flags": ["asthma", "copd", "smoking", "heart failure", "pulmonary hypertension", "prior intubation"],
+      "degradation_rate": 0.010,
+      "criticalness": "Immediate"
+    },
+    {
+      "id": "neurological",
+      "label": "Neurological / Stroke / Seizure",
+      "keywords": [
+        "slurred speech", "facial droop", "arm weakness", "leg weakness",
+        "stroke", "tia", "altered consciousness", "confusion", "confused",
+        "unresponsive", "seizure", "fitting", "epilepsy", "numbness",
+        "sudden severe headache", "thunderclap headache", "syncope",
+        "vertigo", "loss of consciousness", "loc", "gcs"
+      ],
+      "complexity": "High",
+      "complexity_rationale": "Time-critical neurological emergency. Brain tissue loss in ischaemic stroke: ~1.9 million neurons per minute without reperfusion.",
+      "monitoring_criteria": [
+        "FAST: Face droop, Arm weakness, Speech difficulty, Time of onset",
+        "Glasgow Coma Scale (GCS) or AVPU — document and trend",
+        "Pupillary response: size, symmetry, reactivity",
+        "Blood glucose: hypoglycaemia mimics stroke",
+        "BP monitoring: permissive hypertension in acute ischaemic stroke unless >185/110 (thrombolysis threshold)"
+      ],
+      "preliminary_tests": [
+        "Non-contrast CT Head (within 25 min of arrival — exclude haemorrhage before thrombolysis)",
+        "Point-of-Care Blood Glucose (immediate)",
+        "12-Lead ECG (AF as stroke source)",
+        "Comprehensive Metabolic Panel + Coagulation panel",
+        "MRI Brain + DWI if CT negative but stroke strongly suspected",
+        "EEG if subclinical seizure activity suspected"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Alteplase (tPA)",
+          "dosage": "0.9 mg/kg IV (max 90 mg); 10% bolus over 1 min, remainder over 60 min",
+          "indication": "Acute ischaemic stroke, onset <4.5h, haemorrhage excluded on CT",
+          "warning": "CRITICAL: Must exclude haemorrhage first. Absolute contraindications: active bleeding, recent surgery, platelet <100k, recent anticoagulant use. Activate stroke team."
+        },
+        {
+          "name": "Levetiracetam (IV)",
+          "dosage": "500–1500 mg IV loading dose over 15 min",
+          "indication": "Active or recurring seizures",
+          "warning": "Infuse slowly. Monitor for somnolence, agitation, or behavioural changes. Reduce dose in renal impairment."
+        },
+        {
+          "name": "Lorazepam (IV/IM)",
+          "dosage": "0.1 mg/kg IV (max 4 mg per dose) — repeat once if needed",
+          "indication": "Status epilepticus or acute seizure termination",
+          "warning": "Causes respiratory depression — have airway equipment ready. Do not use if haemodynamically unstable without airway control."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Falls with head injury risk. Atrial fibrillation-related embolic stroke more common. Anticoagulant use affects thrombolysis eligibility.",
+        "pediatric": "Seizures common (febrile). True stroke rare — consider ADEM, venous sinus thrombosis. Weight-based anticonvulsant dosing mandatory.",
+        "adult": "Standard FAST assessment. NIHSS scoring recommended for stroke severity."
+      },
+      "comorbidity_flags": ["hypertension", "atrial fibrillation", "anticoagulant", "prior stroke", "diabetes", "hyperlipidaemia", "carotid stenosis"],
+      "degradation_rate": 0.012,
+      "criticalness": "Immediate"
+    },
+    {
+      "id": "sepsis",
+      "label": "Sepsis / Systemic Infection",
+      "keywords": [
+        "sepsis", "fever", "high temperature", "pyrexia", "chills", "rigors",
+        "lethargy", "infection", "uti", "pneumonia", "cellulitis", "abscess",
+        "meningitis", "endocarditis", "bacteraemia", "septic shock",
+        "hypotension", "tachycardia with fever", "confusion with fever"
+      ],
+      "complexity": "High",
+      "complexity_rationale": "Sepsis is a life-threatening organ dysfunction caused by dysregulated host response to infection. Mortality increases 7% per hour without antibiotics in septic shock.",
+      "monitoring_criteria": [
+        "qSOFA: Respiratory rate ≥22, Altered mental status, Systolic BP ≤100",
+        "SOFA score organs: PaO2/FiO2, GCS, MAP, creatinine, bilirubin, platelets",
+        "Lactate trend (target <2 mmol/L with treatment)",
+        "Fluid responsiveness: MAP, HR, urine output (target ≥0.5 mL/kg/h)",
+        "Temperature trend and source identification"
+      ],
+      "preliminary_tests": [
+        "Blood Cultures ×2 sets from different sites (before antibiotics)",
+        "Serum Lactate (urgent — elevated >2 mmol/L indicates tissue hypoperfusion)",
+        "CBC with differential (WBC count, bands)",
+        "CRP and Procalcitonin",
+        "Comprehensive Metabolic Panel (renal and hepatic function)",
+        "Urinalysis + urine culture",
+        "Chest X-Ray if respiratory source suspected"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Piperacillin-Tazobactam (IV)",
+          "dosage": "4.5 g IV q6–8h (adjust for renal function)",
+          "indication": "Broad-spectrum empirical coverage for sepsis of unknown source",
+          "warning": "Adjust dose in renal impairment. Check allergy (penicillin). Obtain cultures BEFORE starting antibiotics."
+        },
+        {
+          "name": "Ceftriaxone (IV)",
+          "dosage": "2 g IV q24h",
+          "indication": "Community-acquired sepsis, meningitis cover (add dexamethasone), urological sepsis",
+          "warning": "Verify cephalosporin/penicillin allergies. Avoid concurrent administration with calcium-containing IV fluids."
+        },
+        {
+          "name": "Crystalloid Fluid Bolus (IV)",
+          "dosage": "30 mL/kg IV over 3h (reassess after each 500 mL bolus)",
+          "indication": "Sepsis-induced hypotension or hypoperfusion",
+          "warning": "Reassess frequently. Excess fluid causes pulmonary oedema — use dynamic measures (stroke volume variation, pulse pressure variation) to guide resuscitation. Caution in CHF/ESRD."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Hypothermia or normal temperature possible despite severe sepsis. Atypical presentation: confusion, falls, functional decline. Higher mortality.",
+        "pediatric": "Paediatric SOFA differs. Age-specific vital sign thresholds critical. Meningococcal septicaemia: non-blanching rash — medical emergency.",
+        "adult": "Hour-1 bundle: culture, lactate, antibiotics, fluid resuscitation, vasopressors if refractory."
+      },
+      "comorbidity_flags": ["immunocompromised", "diabetes", "cancer", "renal failure", "liver disease", "splenectomy", "chronic steroids"],
+      "degradation_rate": 0.009,
+      "criticalness": "Urgent"
+    },
+    {
+      "id": "allergic",
+      "label": "Allergic Reaction / Anaphylaxis",
+      "keywords": [
+        "allergic", "allergy", "anaphylaxis", "anaphylactic", "rash", "hives",
+        "urticaria", "swelling", "angioedema", "shellfish", "peanut", "bee sting",
+        "drug reaction", "throat tightening", "lip swelling", "facial swelling"
+      ],
+      "complexity": "High",
+      "complexity_rationale": "Anaphylaxis is potentially fatal within minutes. Airway oedema, bronchospasm, and distributive shock can develop simultaneously.",
+      "monitoring_criteria": [
+        "Airway patency: stridor, hoarseness, drooling (angioedema)",
+        "Haemodynamic status: hypotension indicates anaphylactic shock",
+        "Skin progression: urticaria spreading, angioedema extending to airway",
+        "SpO2 and respiratory effort",
+        "Response to epinephrine (should see improvement within 5–15 min)"
+      ],
+      "preliminary_tests": [
+        "Continuous ECG and SpO2 monitoring",
+        "Clinical airway assessment (prepare intubation equipment)",
+        "Serum tryptase (draw within 1–3h of reaction for confirmation)",
+        "IV access immediately (wide-bore)"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Adrenaline/Epinephrine (IM)",
+          "dosage": "0.5 mg (1:1000) IM into lateral thigh — child: 0.01 mg/kg",
+          "indication": "FIRST-LINE treatment for anaphylaxis. Any sign of airway involvement, bronchospasm, or hypotension.",
+          "warning": "Repeat every 5–15 min if symptoms persist or recur. If no IM response, consider 0.1 mg IV (1:10,000) titrated. Autoinjector (EpiPen) acceptable if IM unavailable."
+        },
+        {
+          "name": "Chlorphenamine (IV/IM)",
+          "dosage": "10 mg IV/IM slowly",
+          "indication": "Antihistamine — adjunct for urticaria and pruritus",
+          "warning": "NOT first-line for anaphylaxis. Does not treat airway oedema or shock. Can cause sedation and hypotension."
+        },
+        {
+          "name": "Hydrocortisone (IV)",
+          "dosage": "200 mg IV slowly",
+          "indication": "Prevent biphasic reaction — adjunct after adrenaline",
+          "warning": "Delayed onset (~4–6h). Do not substitute for adrenaline. Monitor blood glucose."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Beta-blockers may attenuate response to epinephrine — consider glucagon 1–2 mg IV/IM. Higher aspiration risk.",
+        "pediatric": "Weight-based adrenaline dosing (0.01 mg/kg IM, max 0.5 mg). EpiPen Jr for <30 kg. Avoid prone positioning.",
+        "adult": "Identify and remove trigger. Observe minimum 6h for biphasic reaction before discharge."
+      },
+      "comorbidity_flags": ["prior anaphylaxis", "asthma", "beta blocker", "mast cell disorder", "known allergen"],
+      "degradation_rate": 0.014,
+      "criticalness": "Immediate"
+    },
+    {
+      "id": "trauma",
+      "label": "Trauma / Orthopaedic / Bleeding",
+      "keywords": [
+        "fall", "fracture", "laceration", "cut", "bleeding", "wound",
+        "accident", "injury", "head injury", "polytrauma", "mechanism",
+        "penetrating", "crush", "mva", "road traffic", "haemorrhage"
+      ],
+      "complexity": "Medium",
+      "complexity_rationale": "Acute trauma requires rapid haemorrhage control, neurovascular assessment, and pain management. Occult internal bleeding risk in high-energy mechanisms.",
+      "monitoring_criteria": [
+        "Haemorrhage control: rate of bleeding, response to direct pressure",
+        "Neurovascular status distal to injury: pulse, sensation, motor function, capillary refill",
+        "GCS trend in head injuries",
+        "Deformity, joint range of motion, weight-bearing capability",
+        "Haemodynamic stability: HR and BP trend with blood loss"
+      ],
+      "preliminary_tests": [
+        "Plain Radiography (X-Ray) of the affected extremity or spine",
+        "FAST ultrasound (focused assessment with sonography in trauma) if abdominal trauma",
+        "CT Head + C-Spine if head injury with LOC, amnesia, or GCS <15",
+        "CBC if moderate–severe bleeding suspected",
+        "Group & Screen / Crossmatch if transfusion risk",
+        "Tetanus immunisation status"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Tranexamic Acid (TXA) (IV)",
+          "dosage": "1 g IV over 10 min (must give within 3h of injury)",
+          "indication": "Significant haemorrhage or haemorrhage risk in major trauma",
+          "warning": "Not indicated after 3h — may increase mortality. Contraindicated in isolated head injury without systemic haemorrhage."
+        },
+        {
+          "name": "Ketorolac (IV/IM)",
+          "dosage": "15–30 mg IV/IM (adult, single dose)",
+          "indication": "Moderate-to-severe acute musculoskeletal pain",
+          "warning": "Contraindicated in renal impairment, active peptic ulcer, bleeding disorders, or suspected intracranial bleed. Max 5 days use."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Low-energy falls (e.g. from standing) can cause significant fractures (hip, vertebral) due to osteoporosis. Higher risk of occult intracranial injury. Anticoagulant use increases bleeding risk.",
+        "pediatric": "Non-accidental injury (NAI) must be considered if mechanism inconsistent with injury pattern or age. Greenstick fractures common. Epiphyseal injuries may not show on initial X-ray.",
+        "adult": "Mechanism guides investigation. High-energy mechanisms require systematic primary survey (ATLS)."
+      },
+      "comorbidity_flags": ["anticoagulant", "antiplatelet", "osteoporosis", "haemophilia", "chronic liver disease"],
+      "degradation_rate": 0.003,
+      "criticalness": "Stable"
+    },
+    {
+      "id": "abdominal",
+      "label": "Abdominal / GI",
+      "keywords": [
+        "abdominal pain", "stomach pain", "belly pain", "nausea", "vomiting",
+        "diarrhoea", "diarrhea", "constipation", "appendicitis", "bowel",
+        "pancreatitis", "cholecystitis", "gallstone", "hernia", "obstruction",
+        "peritonitis", "gi bleed", "haematemesis", "melaena", "rectal bleeding"
+      ],
+      "complexity": "Medium",
+      "complexity_rationale": "Broad differential including surgical emergencies (appendicitis, perforation, obstruction) and medical causes. Peritonitis carries high mortality if untreated.",
+      "monitoring_criteria": [
+        "Abdominal tenderness: localised vs diffuse, rebound tenderness, guarding (peritonism)",
+        "Hydration status: mucous membranes, skin turgor, urine output, HR/BP",
+        "Bowel sounds",
+        "Ability to tolerate oral intake",
+        "Serial abdominal exams if diagnosis unclear"
+      ],
+      "preliminary_tests": [
+        "Abdominal Ultrasound (first-line for RUQ and appendix)",
+        "CT Abdomen/Pelvis with contrast (if US inconclusive or surgical emergency suspected)",
+        "Comprehensive Metabolic Panel (electrolytes, renal, LFTs)",
+        "Lipase (pancreatitis)",
+        "CBC",
+        "Urinary hCG in females of childbearing age (ectopic exclusion)",
+        "Erect CXR if perforation suspected (free air under diaphragm)"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Ondansetron (IV/ODT)",
+          "dosage": "4–8 mg IV slowly or 8 mg ODT",
+          "indication": "Severe nausea or active vomiting",
+          "warning": "Prolongs QT interval. Use with caution in patients at risk for arrhythmia or on other QT-prolonging agents."
+        },
+        {
+          "name": "Morphine Sulfate (IV)",
+          "dosage": "2.5–5 mg IV q4h PRN",
+          "indication": "Moderate-to-severe abdominal pain (adequate analgesia does not mask diagnosis)",
+          "warning": "Titrate to pain. Monitor respiratory rate and sedation. Caution in hepatic failure."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Atypical presentations common (e.g. appendicitis without classic signs). Higher perforation risk due to delayed presentation. Mesenteric ischaemia in AF patients.",
+        "pediatric": "Appendicitis peaks 10–12y. Intussusception in <3y (redcurrant jelly stool). Malrotation in neonates.",
+        "adult": "Ectopic pregnancy must be excluded in females of reproductive age. Renal colic common cause of flank/abdominal pain."
+      },
+      "comorbidity_flags": ["inflammatory bowel disease", "prior abdominal surgery", "hernia", "cirrhosis", "anticoagulant"],
+      "degradation_rate": 0.004,
+      "criticalness": "Urgent"
+    },
+    {
+      "id": "obstetric",
+      "label": "Obstetric / Gynaecological",
+      "keywords": [
+        "pregnancy", "pregnant", "ectopic", "miscarriage", "labour", "contractions",
+        "vaginal bleeding", "abdominal pain pregnancy", "pre-eclampsia", "eclampsia",
+        "placenta", "postpartum", "obstetric", "gynaecological", "pelvis pain"
+      ],
+      "complexity": "High",
+      "complexity_rationale": "Obstetric emergencies carry significant maternal and fetal mortality. Ectopic rupture and eclampsia can be immediately life-threatening.",
+      "monitoring_criteria": [
+        "Gestational age and fetal monitoring (if viable gestational age)",
+        "Haemodynamic stability in suspected ectopic rupture",
+        "Blood pressure trend for pre-eclampsia (≥140/90 with proteinuria)",
+        "Seizure activity in eclampsia",
+        "Fetal heart rate (if ≥24 weeks)"
+      ],
+      "preliminary_tests": [
+        "Quantitative beta-hCG (serum)",
+        "Pelvic Ultrasound (transvaginal if <10 weeks)",
+        "CBC, Coagulation panel (DIC risk)",
+        "Blood group and antibody screen",
+        "Urine dip for protein (pre-eclampsia)"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Magnesium Sulfate (IV)",
+          "dosage": "4 g IV loading dose over 20 min, then 1 g/h maintenance",
+          "indication": "Eclampsia seizure prevention and treatment",
+          "warning": "Monitor reflexes, respiratory rate, and urine output hourly. Antidote: calcium gluconate 10 mL of 10% IV. Toxicity causes respiratory arrest."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Less applicable — consider uterine prolapse, gynaecological malignancy.",
+        "pediatric": "Adolescent ectopic possible. Consider NAI if pelvic injury without clear mechanism.",
+        "adult": "Standard obstetric protocols apply. Always involve obstetric team early."
+      },
+      "comorbidity_flags": ["hypertension", "diabetes", "prior ectopic", "clotting disorder", "iud", "ivf"],
+      "degradation_rate": 0.010,
+      "criticalness": "Urgent"
+    },
+    {
+      "id": "psychiatric",
+      "label": "Psychiatric / Mental Health",
+      "keywords": [
+        "overdose", "self-harm", "suicidal", "psychiatric", "mental health",
+        "anxiety", "panic", "psychosis", "agitation", "aggression",
+        "hallucination", "depression", "behavioural disturbance"
+      ],
+      "complexity": "Medium",
+      "complexity_rationale": "Risk of deliberate self-harm or harm to others. Medical stabilisation must precede psychiatric assessment. Overdose may have delayed toxicity.",
+      "monitoring_criteria": [
+        "Safety risk assessment: suicidal ideation, plan, means, intent",
+        "Level of agitation and risk to staff",
+        "Toxidrome identification (pupil size, HR, BP, temperature, diaphoresis)",
+        "GCS if overdose or substance use"
+      ],
+      "preliminary_tests": [
+        "Blood and urine toxicology screen",
+        "Paracetamol/acetaminophen level (even if not suspected — commonly taken in overdose)",
+        "Salicylate level",
+        "Blood glucose, electrolytes",
+        "ECG (QT prolongation in tricyclic antidepressant overdose)"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Naloxone (IM/IV/Intranasal)",
+          "dosage": "0.4–2 mg IV/IM q2–3min; 4 mg intranasal",
+          "indication": "Opioid overdose (suspected decreased respiratory drive, pinpoint pupils, miosis)",
+          "warning": "Short half-life — may need infusion or repeated doses. Can precipitate acute withdrawal. Caution in opioid-dependent patients."
+        },
+        {
+          "name": "N-Acetylcysteine (IV)",
+          "dosage": "150 mg/kg over 15–60 min, then 50 mg/kg over 4h, then 100 mg/kg over 16h",
+          "indication": "Paracetamol/acetaminophen overdose — within 24h (most effective within 8h)",
+          "warning": "Can cause anaphylactoid reaction — slow infusion rate if occurs. Do not delay for symptom absence."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Drug interactions and polypharmacy. Overdose may be accidental. Cognitive impairment affects capacity assessment.",
+        "pediatric": "Careful history from carers. Consider NAI. Accidental ingestion most common in young children.",
+        "adult": "Risk-stratify for disposition. Medically clear before psychiatric review."
+      },
+      "comorbidity_flags": ["prior suicide attempt", "depression", "bipolar", "schizophrenia", "substance use", "opioid dependent"],
+      "degradation_rate": 0.005,
+      "criticalness": "Urgent"
+    },
+    {
+      "id": "toxicology",
+      "label": "Toxicology / Poisoning",
+      "keywords": [
+        "poisoning", "overdose", "toxic", "ingestion", "drug overdose",
+        "paracetamol", "aspirin", "tricyclic", "benzodiazepine", "opioid",
+        "organophosphate", "carbon monoxide", "alcohol intoxication", "substance"
+      ],
+      "complexity": "High",
+      "complexity_rationale": "Toxicological emergencies have delayed presentation and variable time courses. Some agents (paracetamol, digoxin) have peak toxicity hours after ingestion.",
+      "monitoring_criteria": [
+        "Toxidrome identification: cholinergic, sympathomimetic, opioid, anticholinergic, serotonin syndrome",
+        "Continuous cardiac monitoring (QRS widening, QT prolongation)",
+        "Mental status and GCS trend",
+        "Respiratory effort — opioid and benzodiazepine overdose cause hypoventilation",
+        "Temperature: hyperthermia in serotonin syndrome, hypothermia in opioid/alcohol overdose"
+      ],
+      "preliminary_tests": [
+        "Urine and blood toxicology screen",
+        "Serum paracetamol level at 4h post-ingestion",
+        "Salicylate level",
+        "12-Lead ECG",
+        "ABG if respiratory compromise",
+        "Carbon monoxide (COHb) if CO poisoning suspected"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Naloxone",
+          "dosage": "0.4–2 mg IV/IM/intranasal, repeat q2–3min",
+          "indication": "Opioid toxidrome",
+          "warning": "Duration shorter than most opioids — infusion may be required. Seizures possible if precipitating acute withdrawal."
+        },
+        {
+          "name": "Sodium Bicarbonate (IV)",
+          "dosage": "1–2 mEq/kg IV bolus",
+          "indication": "Tricyclic antidepressant overdose with QRS >120ms or dysrhythmia; salicylate poisoning urinary alkalinisation",
+          "warning": "Monitor serum pH (target 7.45–7.55). Hypokalaemia worsens with alkalosis — monitor K+."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Narrower therapeutic windows. Polypharmacy increases drug interaction risk. Accidental overdose common.",
+        "pediatric": "Accidental ingestion most common <5y. Intentional overdose in adolescents. Weight-based antidote dosing.",
+        "adult": "Establish time of ingestion and agent. Modified-release formulations change kinetics."
+      },
+      "comorbidity_flags": ["liver disease", "renal failure", "alcohol dependence", "opioid dependence", "epilepsy"],
+      "degradation_rate": 0.008,
+      "criticalness": "Urgent"
+    },
+    {
+      "id": "geriatric_specific",
+      "label": "Geriatric-Specific Presentations",
+      "keywords": [
+        "fall elderly", "confusion elderly", "delirium", "dementia", "weakness elderly",
+        "functional decline", "not eating", "incontinence", "social admission",
+        "urinary tract infection elderly", "polypharmacy", "pressure ulcer"
+      ],
+      "complexity": "Medium",
+      "complexity_rationale": "Geriatric presentations are frequently atypical with non-specific complaints masking serious underlying pathology. Delirium in elderly is a medical emergency until proven otherwise.",
+      "monitoring_criteria": [
+        "4AT delirium screen (Alert, Abbreviated Mental Test-4, Attention, Acute onset)",
+        "Medication review (polypharmacy adverse effects)",
+        "Functional baseline — compare to pre-morbid level",
+        "Falls risk: gait, balance, environment",
+        "Pressure area assessment"
+      ],
+      "preliminary_tests": [
+        "Full septic screen (UTI most common delirium cause in elderly)",
+        "CBC, CMP, TFTs (hypothyroidism mimics dementia)",
+        "B12 and folate",
+        "ECG",
+        "CT Head if delirium with no clear cause or focal neurological signs"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Haloperidol (PO/IM) — low dose",
+          "dosage": "0.5–1 mg PO/IM (geriatric — start low, go slow)",
+          "indication": "Acute agitation in hyperactive delirium where patient at risk to self/others",
+          "warning": "QT prolongation risk. Avoid in Lewy Body dementia (fatal neuroleptic sensitivity). Not first-line — treat underlying cause first."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "All presentations in this domain are geriatric-specific. Apply frailty scoring (CFS). Involve social work early.",
+        "pediatric": "Not applicable.",
+        "adult": "Consider early-onset dementia in adults presenting with cognitive decline <65y."
+      },
+      "comorbidity_flags": ["dementia", "parkinson's", "diabetes", "heart failure", "renal impairment", "anticoagulant", "fall risk"],
+      "degradation_rate": 0.006,
+      "criticalness": "Urgent"
+    },
+    {
+      "id": "pediatric_specific",
+      "label": "Paediatric-Specific Presentations",
+      "keywords": [
+        "febrile convulsion", "croup", "bronchiolitis", "rsv", "kawasaki",
+        "intussusception", "pyloric stenosis", "meningococcal", "rash child",
+        "not feeding", "crying inconsolably", "jolt test", "fontanelle bulging",
+        "non-accidental injury", "nai", "safeguarding"
+      ],
+      "complexity": "High",
+      "complexity_rationale": "Paediatric emergencies require age-specific vital sign thresholds and medication dosing. Deterioration can be rapid; compensation masks severity until decompensation.",
+      "monitoring_criteria": [
+        "Paediatric Early Warning Score (PEWS) or TRAP score",
+        "Age-appropriate vital sign thresholds (HR, RR, BP all vary by age)",
+        "Work of breathing: grunting, nasal flaring, intercostal/subcostal recession",
+        "Skin colour and perfusion (mottling, capillary refill >2s)",
+        "Hydration: tears, fontanelle (anterior), urine output, skin turgor"
+      ],
+      "preliminary_tests": [
+        "Blood glucose (point-of-care — hypoglycaemia common in sick children)",
+        "CBC, CRP (infection)",
+        "Blood culture if fever without source",
+        "Lumbar puncture if meningitis suspected (after imaging exclusion of raised ICP)",
+        "Urine culture (clean-catch or catheter specimen)"
+      ],
+      "emergency_medications": [
+        {
+          "name": "Dextrose 10% (IV)",
+          "dosage": "5 mL/kg IV bolus (hypoglycaemia in child)",
+          "indication": "Hypoglycaemia (BGL <3 mmol/L in child)",
+          "warning": "Do not use 50% dextrose in children — causes vein damage. Monitor glucose response at 15 min."
+        },
+        {
+          "name": "Ceftriaxone (IV)",
+          "dosage": "80–100 mg/kg/day IV (max 4g/day) — meningitis dose",
+          "indication": "Suspected bacterial meningitis or meningococcal disease",
+          "warning": "Do not delay for LP if clinical concern is high. Add ampicillin if Listeria coverage needed (<3 months). Check allergies."
+        }
+      ],
+      "age_modifiers": {
+        "geriatric": "Not applicable.",
+        "pediatric": "All presentations in this domain. Use Broselow tape or weight-based calculator for all drug dosing. Involve paediatric specialist early.",
+        "adult": "Early-onset conditions (cystic fibrosis, congenital heart disease) may present in young adults."
+      },
+      "comorbidity_flags": ["premature birth", "congenital heart disease", "immunodeficiency", "sickle cell", "cystic fibrosis", "on steroids"],
+      "degradation_rate": 0.010,
+      "criticalness": "Urgent"
+    }
+  ]
+}

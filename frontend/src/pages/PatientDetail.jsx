@@ -1,7 +1,7 @@
-/** PatientDetail — full patient view with vitals, AI recommendation, override, audit */
+/** Patient record: vitals, recommendation, override, and care-sequence actions. */
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getPatient, getAssessments, reassessPatient, addVitals, addObservation, lookupPatient, api } from '../api'
+import { getPatient, getAssessments, reassessPatient, addVitals, addObservation, lookupPatient, getLiveQueue, api } from '../api'
 import PriorityBadge from '../components/PriorityBadge'
 import ConfidenceBadge from '../components/ConfidenceBadge'
 import RiskFactorList from '../components/RiskFactorList'
@@ -10,8 +10,10 @@ import OverrideDialog from '../components/OverrideDialog'
 import AuditEventList from '../components/AuditEventList'
 import SimulationControls from '../components/SimulationControls'
 import TopNavbar from '../components/TopNavbar'
-import { 
-  ArrowLeft, RefreshCw, ShieldAlert, User, Heart, Activity, 
+import { CareSequenceFull } from '../components/CareSequence'
+import { getCareSequence, DISPOSITION_LABELS } from '../workflow'
+import {
+  ArrowLeft, RefreshCw, ShieldAlert, User, Heart, Activity,
   Thermometer, Wind, TrendingDown, X, Search, Brain, Pencil, Plus,
   Menu, Calendar, Hourglass, FileText, Settings, Sparkles, LayoutGrid, ClipboardList, BarChart2
 } from 'lucide-react'
@@ -23,6 +25,15 @@ function formatTime(dt) {
 function formatDate(dt) {
   if (!dt) return '—'
   return new Date(dt).toLocaleDateString() + ' ' + new Date(dt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function expectedWaitText(priority) {
+  if (priority === 'P1') return 'Immediate'
+  if (priority === 'P2') return '< 10m'
+  if (priority === 'P3') return '< 30m'
+  if (priority === 'P4') return '< 60m'
+  if (priority === 'P5') return '< 120m'
+  return '—'
 }
 function waitMinutes(arrival) {
   if (!arrival) return 0
@@ -37,91 +48,6 @@ const VITAL_LABELS = {
 const VITAL_UNITS = {
   heart_rate: 'bpm', spo2: '%', respiratory_rate: '/min',
   systolic_bp: 'mmHg', diastolic_bp: 'mmHg', temperature: '°C'
-}
-
-function WorkflowStepper({ patient, latestAssessment }) {
-  const hasVitals = latestAssessment?.vitals && Object.keys(latestAssessment.vitals).length > 0
-  const hasTests = latestAssessment?.ai_decision_support?.preliminary_tests?.length > 0
-  const isWaiting = patient.status === 'waiting'
-  const isInProgress = patient.status === 'in_progress'
-  const isDone = patient.status === 'discharged' || patient.status === 'admitted'
-
-  let activeIndex = 0
-  if (!hasVitals) {
-    activeIndex = 0
-  } else if (isDone) {
-    activeIndex = 4
-  } else if (isInProgress) {
-    activeIndex = 3
-  } else if (hasTests) {
-    activeIndex = 1
-  } else {
-    activeIndex = 2
-  }
-
-  const steps = [
-    { label: 'Vitals Recorded', desc: hasVitals ? 'Complete' : 'Pending' },
-    { label: 'Preliminary Tests', desc: hasTests ? `${latestAssessment.ai_decision_support.preliminary_tests.length} Suggested` : 'Not required' },
-    { label: 'In Queue', desc: isWaiting ? 'Waiting' : 'Passed' },
-    { label: 'Being Checked', desc: isInProgress ? 'In progress' : 'Pending' },
-    { label: 'Done', desc: isDone ? 'Completed' : 'Pending' }
-  ]
-
-  return (
-    <div style={{ 
-      display: 'flex', 
-      alignItems: 'center', 
-      justifyContent: 'space-between', 
-      padding: '20px 24px', 
-      background: 'var(--bg-card)', 
-      border: '1px solid var(--border)', 
-      borderRadius: 'var(--r-md)', 
-      marginBottom: '24px',
-      boxShadow: 'var(--shadow-sm)'
-    }}>
-      {steps.map((step, idx) => {
-        const isActive = idx === activeIndex
-        const isCompleted = idx < activeIndex
-        const color = isCompleted ? 'var(--p5)' : isActive ? 'var(--accent)' : 'var(--text-muted)'
-        const lineBg = idx < activeIndex ? 'var(--p5)' : 'var(--border)'
-
-        return (
-          <div key={idx} style={{ display: 'flex', alignItems: 'center', flex: idx < steps.length - 1 ? 1 : 'none' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', minWidth: '100px' }}>
-              <div 
-                style={{ 
-                  width: '28px', 
-                  height: '28px', 
-                  borderRadius: '50%', 
-                  background: isCompleted ? 'var(--p5)' : isActive ? 'var(--accent)' : 'transparent',
-                  border: `2px solid ${isActive ? 'var(--accent)' : isCompleted ? 'var(--p5)' : 'var(--border)'}`,
-                  color: isCompleted || isActive ? '#fff' : 'var(--text-muted)',
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  fontSize: '0.8rem', 
-                  fontWeight: 700,
-                  marginBottom: '6px',
-                  boxShadow: isActive ? '0 0 0 4px rgba(124, 58, 237, 0.15)' : 'none'
-                }}
-              >
-                {isCompleted ? '✓' : idx + 1}
-              </div>
-              <span style={{ fontSize: '0.82rem', fontWeight: isActive || isCompleted ? 700 : 500, color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                {step.label}
-              </span>
-              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                {step.desc}
-              </span>
-            </div>
-            {idx < steps.length - 1 && (
-              <div style={{ height: '2px', background: lineBg, flex: 1, margin: '0 12px', marginTop: '-24px' }} />
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
 }
 
 function VitalItem({ label, value, unit, status, name, editing, defaultValue }) {
@@ -209,6 +135,8 @@ function vitalStatus(key, value, ageGroup) {
   if (key === 'respiratory_rate' && (value > 20 || value < 12)) return 'abnormal'
   if (key === 'systolic_bp' && (value < 70 || value > 180)) return 'critical'
   if (key === 'systolic_bp' && (value < 90 || value > 160)) return 'abnormal'
+  if (key === 'temperature' && (value > 39.0 || value < 35.0 || value < 20.0)) return 'critical'
+  if (key === 'temperature' && (value > 37.9 || value < 36.1)) return 'abnormal'
   return ''
 }
 
@@ -221,6 +149,7 @@ export default function PatientDetail() {
   const [overrideOpen, setOverrideOpen] = useState(false)
   const [activeTab, setActiveTab] = useState('overview')
   const [reassessing, setReassessing] = useState(false)
+  const [queuePosition, setQueuePosition] = useState(null)
 
   const [actionModal, setActionModal] = useState({
     isOpen: false,
@@ -243,9 +172,20 @@ export default function PatientDetail() {
 
   const load = useCallback(async () => {
     try {
-      const [pRes, aRes] = await Promise.all([getPatient(id), getAssessments(id)])
+      const [pRes, aRes, qRes] = await Promise.all([
+        getPatient(id),
+        getAssessments(id),
+        getLiveQueue()
+      ])
       setPatient(pRes.data)
       setAssessments(aRes.data)
+      const qList = qRes.data || [];
+      const idx = qList.findIndex(item => item.id === id);
+      if (idx !== -1) {
+        setQueuePosition(idx + 1);
+      } else {
+        setQueuePosition(null);
+      }
     } catch { }
     setLoading(false)
   }, [id])
@@ -253,12 +193,27 @@ export default function PatientDetail() {
   useEffect(() => { load() }, [load])
 
   async function handleReassess() {
-    setReassessing(true)
+    if (confirm("Update vitals before reassessment? OK to record vitals, Cancel to reassess on current data.")) {
+      setEditingVitals(true)
+    } else {
+      setReassessing(true)
+      try {
+        await reassessPatient({ patient_id: id, trigger: 'manual_reassessment' })
+        await load()
+      } catch { }
+      setReassessing(false)
+    }
+  }
+
+  async function handleStatusChange(status) {
+    const labels = { in_progress: 'start the visit for', admitted: 'admit', referred: 'refer', discharged: 'discharge' }
+    if (!window.confirm(`Confirm: ${labels[status]} this patient?`)) return
     try {
-      await reassessPatient({ patient_id: id, trigger: 'manual_reassessment' })
+      await api.patch(`/patients/${id}/`, { status })
       await load()
-    } catch { }
-    setReassessing(false)
+    } catch {
+      alert('Failed to update patient status.')
+    }
   }
 
   if (loading) return <div className="loading-wrap" style={{ height: '100vh' }}><RefreshCw size={16} className="spin" /> Loading patient…</div>
@@ -279,7 +234,7 @@ export default function PatientDetail() {
     if (f === 'temperature') return 'temperature'
     return f.replace(/_/g, ' ')
   }).filter((v, i, a) => a.indexOf(v) === i)
-  
+
   let nextStepText = ''
   if (displayMissing.length > 0) {
     if (displayMissing.length === 1) {
@@ -295,6 +250,28 @@ export default function PatientDetail() {
 
   return (
     <div className="app-container" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--bg-base)', width: '100%' }}>
+      {/* Reassessing Loader Overlay */}
+      {reassessing && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          background: 'rgba(0, 0, 0, 0.5)',
+          backdropFilter: 'blur(3px)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 999999,
+          color: '#fff',
+        }}>
+          <RefreshCw size={42} className="spin" style={{ marginBottom: '16px', color: 'var(--accent)' }} />
+          <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>AI Decision Support Engine</h3>
+          <p style={{ margin: '8px 0 0 0', fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)' }}>Running clinical reassessment...</p>
+        </div>
+      )}
       {/* Top Navbar */}
       <TopNavbar activeTab="patients" />
 
@@ -315,17 +292,17 @@ export default function PatientDetail() {
                 <RefreshCw size={12} />
                 Refresh
               </button>
-              <button 
-                className="btn btn-ghost btn-sm" 
-                onClick={handleReassess} 
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={handleReassess}
                 disabled={reassessing}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               >
                 <RefreshCw size={12} className={reassessing ? 'spin' : ''} />
                 {reassessing ? 'Reassessing…' : 'Reassess'}
               </button>
-              <button 
-                className="btn btn-outline-danger btn-sm" 
+              <button
+                className="btn btn-outline-danger btn-sm"
                 onClick={() => setOverrideOpen(true)}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               >
@@ -340,7 +317,7 @@ export default function PatientDetail() {
             <div className="patient-avatar-circle">
               {patient.name ? patient.name.charAt(0).toUpperCase() : 'T'}
             </div>
-            
+
             <div className="patient-header-main">
               <div className="patient-header-top-row">
                 <h1 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
@@ -349,18 +326,42 @@ export default function PatientDetail() {
                     ({patient.patient_identifier || 'No ID'})
                   </span>
                 </h1>
-                
+
                 {patient.scenario_tag && (
                   <span className="scenario-tag" style={{ margin: 0 }}>
                     {patient.scenario_tag.replace(/_/g, '-')}
                   </span>
                 )}
               </div>
-              
-              <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-secondary)', margin: '0 0 10px 0' }}>
-                {patient.age}y {patient.age_group} · {patient.sex || 'Unknown sex'}
+
+              <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-secondary)', margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <span>{patient.age}y {patient.age_group} · {patient.sex || 'Unknown sex'}</span>
+                {queuePosition !== null && (
+                  <span style={{
+                    fontSize: '0.72rem',
+                    background: 'rgba(124, 58, 237, 0.08)',
+                    color: 'var(--accent)',
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                    fontWeight: 700,
+                    border: '1px solid rgba(124, 58, 237, 0.2)'
+                  }}>
+                    Sequence No: #{queuePosition}
+                  </span>
+                )}
+                <span style={{
+                  fontSize: '0.72rem',
+                  background: 'var(--bg-hover)',
+                  color: 'var(--text-muted)',
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  fontWeight: 500,
+                  border: '1px solid var(--border)'
+                }}>
+                  Target Wait: {expectedWaitText(patient.current_priority)}
+                </span>
               </h2>
-              
+
               {/* Dynamic Alert Actions Inline */}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: '10px' }}>
                 {(!patient.vital_readings || patient.vital_readings.length === 0) && (
@@ -382,11 +383,11 @@ export default function PatientDetail() {
                   </button>
                 )}
               </div>
-              
+
               <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', margin: '0 0 12px 0' }}>
                 <strong>Chief complaint:</strong> {patient.chief_complaint}
               </p>
-              
+
               <div className="patient-header-meta-row">
                 <div className="patient-header-meta-item">
                   <Calendar size={13} style={{ color: 'var(--text-muted)' }} />
@@ -394,7 +395,18 @@ export default function PatientDetail() {
                 </div>
                 <div className="patient-header-meta-item">
                   <Hourglass size={13} style={{ color: 'var(--p2)' }} />
-                  <span style={{ color: 'var(--p2)', fontWeight: 600 }}>Waiting: {wait}m</span>
+                  <span style={{ color: 'var(--p2)', fontWeight: 600 }}>
+                    Waiting: {wait}m
+                    {patient.last_attended_time && (
+                      <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', fontWeight: 400, marginLeft: '6px' }}>
+                        (Attended {(() => {
+                          const diffMs = new Date() - new Date(patient.last_attended_time);
+                          const diffMin = Math.max(0, Math.floor(diffMs / 60000));
+                          return `${diffMin}m`;
+                        })()} ago)
+                      </span>
+                    )}
+                  </span>
                 </div>
                 <div className="patient-header-meta-item">
                   <LayoutGrid size={13} style={{ color: 'var(--text-muted)' }} />
@@ -406,13 +418,66 @@ export default function PatientDetail() {
                     History: {patient.history_available ? 'Available' : 'Not available'}
                   </span>
                 </div>
+                <div className="patient-header-meta-item" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <User size={13} style={{ color: 'var(--text-muted)' }} />
+                  <span style={{ fontWeight: 600 }}>Doctor:</span>
+                  <select
+                    value={patient.assigned_doctor || ''}
+                    onChange={async (e) => {
+                      const newDocName = e.target.value;
+                      try {
+                        await api.patch(`/patients/${patient.id}/`, {
+                          assigned_doctor: newDocName
+                        });
+                        alert("Assigned doctor updated successfully!");
+                        load();
+                      } catch {
+                        alert("Failed to update assigned doctor.");
+                      }
+                    }}
+                    style={{
+                      padding: '2px 6px',
+                      fontSize: '0.78rem',
+                      border: '1px solid var(--border)',
+                      borderRadius: '4px',
+                      background: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="">Unassigned</option>
+                    {(() => {
+                      const saved = localStorage.getItem('ed_doctors');
+                      const docList = saved ? JSON.parse(saved) : [
+                        { name: 'Dr. Kapoor' },
+                        { name: 'Dr. Sharma' },
+                        { name: 'Dr. Roy' },
+                        { name: 'Dr. Patel' },
+                        { name: 'Dr. Sen' },
+                        { name: 'Dr. Joshi' },
+                        { name: 'Dr. Gupta' },
+                        { name: 'Dr. Iyer' }
+                      ];
+                      return docList.map((doc, dIdx) => (
+                        <option key={dIdx} value={doc.name}>{doc.name}</option>
+                      ));
+                    })()}
+                  </select>
+                </div>
               </div>
             </div>
-            
+
             <div className="patient-header-badges">
               <PriorityBadge priority={patient.current_priority} showLabel />
               {latestAssessment && (
-                <ConfidenceBadge confidence={latestAssessment.confidence} label={latestAssessment.confidence_label} />
+                <ConfidenceBadge
+                  confidence={latestAssessment.confidence}
+                  label={latestAssessment.confidence_label}
+                  breakdown={latestAssessment.confidence_breakdown}
+                  showOverride={true}
+                  onOverride={() => setOverrideOpen(true)}
+                />
               )}
               {latestAssessment && (
                 <span className={`safety-pill ${latestAssessment.requires_human_review ? 'YELLOW' : 'GREEN'}`}>
@@ -422,7 +487,7 @@ export default function PatientDetail() {
             </div>
           </div>
 
-          <WorkflowStepper patient={patient} latestAssessment={latestAssessment} />
+          <CareSequenceFull patient={patient} latestAssessment={latestAssessment} />
 
           {/* Tab Navigation */}
           <div className="page-tabs" role="tablist">
@@ -471,128 +536,128 @@ export default function PatientDetail() {
                       </button>
                     )}
                   </div>
-                    
-                    <form onSubmit={async (e) => {
-                      e.preventDefault();
-                      const payload = {};
-                      ['heart_rate', 'spo2', 'respiratory_rate', 'systolic_bp', 'diastolic_bp', 'temperature'].forEach(f => {
-                        const val = e.target[f].value;
-                        if (val) {
-                          payload[f] = parseFloat(val);
-                        } else if (latestVitals && latestVitals[f] != null) {
-                          payload[f] = latestVitals[f];
-                        }
-                      });
-                      payload['mental_status'] = e.target['mental_status']?.value || latestVitals?.mental_status || 'alert';
-                      try {
-                        await addVitals(id, payload);
-                        await reassessPatient({ patient_id: id, trigger: 'vitals_update' });
-                        alert("Vitals recorded and triage updated!");
-                        setEditingVitals(false);
-                        load();
-                      } catch (err) {
-                        alert(err.message || "Failed to save vitals.");
+
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    const payload = {};
+                    ['heart_rate', 'spo2', 'respiratory_rate', 'systolic_bp', 'diastolic_bp', 'temperature'].forEach(f => {
+                      const val = e.target[f].value;
+                      if (val) {
+                        payload[f] = parseFloat(val);
+                      } else if (latestVitals && latestVitals[f] != null) {
+                        payload[f] = latestVitals[f];
                       }
-                    }}>
-                      <div className="vitals-grid">
-                        <VitalItem
-                          label="Heart Rate"
-                          value={latestVitals?.heart_rate}
-                          unit="bpm"
-                          status={vitalStatus('heart_rate', latestVitals?.heart_rate, patient.age_group)}
-                          name="heart_rate"
-                          editing={editingVitals}
-                          defaultValue={latestVitals?.heart_rate}
-                        />
-                        <VitalItem
-                          label="SpO₂"
-                          value={latestVitals?.spo2}
-                          unit="%"
-                          status={vitalStatus('spo2', latestVitals?.spo2, patient.age_group)}
-                          name="spo2"
-                          editing={editingVitals}
-                          defaultValue={latestVitals?.spo2}
-                        />
-                        <VitalItem
-                          label="Resp. Rate"
-                          value={latestVitals?.respiratory_rate}
-                          unit="/min"
-                          status={vitalStatus('respiratory_rate', latestVitals?.respiratory_rate, patient.age_group)}
-                          name="respiratory_rate"
-                          editing={editingVitals}
-                          defaultValue={latestVitals?.respiratory_rate}
-                        />
-                        
-                        {editingVitals ? (
-                          <div className="vital-item editing">
-                            <span className="vital-label">Systolic / Diastolic BP</span>
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: 'auto' }}>
-                              <input
-                                type="number"
-                                name="systolic_bp"
-                                className="vital-input-edit"
-                                style={{ flex: 1, minWidth: 0 }}
-                                defaultValue={latestVitals?.systolic_bp || ''}
-                                placeholder="SBP"
-                              />
-                              <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>/</span>
-                              <input
-                                type="number"
-                                name="diastolic_bp"
-                                className="vital-input-edit"
-                                style={{ flex: 1, minWidth: 0 }}
-                                defaultValue={latestVitals?.diastolic_bp || ''}
-                                placeholder="DBP"
-                              />
-                            </div>
-                            <span className="vital-unit" style={{ marginTop: 2 }}>mmHg</span>
+                    });
+                    payload['mental_status'] = e.target['mental_status']?.value || latestVitals?.mental_status || 'alert';
+                    try {
+                      await addVitals(id, payload);
+                      await reassessPatient({ patient_id: id, trigger: 'vitals_update' });
+                      alert("Vitals recorded and triage updated!");
+                      setEditingVitals(false);
+                      load();
+                    } catch (err) {
+                      alert(err.message || "Failed to save vitals.");
+                    }
+                  }}>
+                    <div className="vitals-grid">
+                      <VitalItem
+                        label="Heart Rate"
+                        value={latestVitals?.heart_rate}
+                        unit="bpm"
+                        status={vitalStatus('heart_rate', latestVitals?.heart_rate, patient.age_group)}
+                        name="heart_rate"
+                        editing={editingVitals}
+                        defaultValue={latestVitals?.heart_rate}
+                      />
+                      <VitalItem
+                        label="SpO₂"
+                        value={latestVitals?.spo2}
+                        unit="%"
+                        status={vitalStatus('spo2', latestVitals?.spo2, patient.age_group)}
+                        name="spo2"
+                        editing={editingVitals}
+                        defaultValue={latestVitals?.spo2}
+                      />
+                      <VitalItem
+                        label="Resp. Rate"
+                        value={latestVitals?.respiratory_rate}
+                        unit="/min"
+                        status={vitalStatus('respiratory_rate', latestVitals?.respiratory_rate, patient.age_group)}
+                        name="respiratory_rate"
+                        editing={editingVitals}
+                        defaultValue={latestVitals?.respiratory_rate}
+                      />
+
+                      {editingVitals ? (
+                        <div className="vital-item editing">
+                          <span className="vital-label">Systolic / Diastolic BP</span>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: 'auto' }}>
+                            <input
+                              type="number"
+                              name="systolic_bp"
+                              className="vital-input-edit"
+                              style={{ flex: 1, minWidth: 0 }}
+                              defaultValue={latestVitals?.systolic_bp || ''}
+                              placeholder="SBP"
+                            />
+                            <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>/</span>
+                            <input
+                              type="number"
+                              name="diastolic_bp"
+                              className="vital-input-edit"
+                              style={{ flex: 1, minWidth: 0 }}
+                              defaultValue={latestVitals?.diastolic_bp || ''}
+                              placeholder="DBP"
+                            />
                           </div>
-                        ) : (
-                          <VitalItem
-                            label="Systolic / Diastolic BP"
-                            value={latestVitals?.systolic_bp ? `${latestVitals.systolic_bp}/${latestVitals.diastolic_bp}` : null}
-                            unit="mmHg"
-                            status={vitalStatus('systolic_bp', latestVitals?.systolic_bp, patient.age_group)}
-                            name="systolic_bp"
-                            editing={false}
-                          />
-                        )}
-
-                        <VitalItem
-                          label="Temperature"
-                          value={latestVitals?.temperature}
-                          unit="°C"
-                          status={vitalStatus('temperature', latestVitals?.temperature, patient.age_group)}
-                          name="temperature"
-                          editing={editingVitals}
-                          defaultValue={latestVitals?.temperature}
-                        />
-                        <VitalItem
-                          label="Consciousness"
-                          value={latestVitals?.mental_status}
-                          unit=""
-                          status={latestVitals?.mental_status === 'unresponsive' ? 'critical' : latestVitals?.mental_status === 'confused' ? 'abnormal' : ''}
-                          name="mental_status"
-                          editing={editingVitals}
-                          defaultValue={latestVitals?.mental_status}
-                        />
-                      </div>
-
-                      {editingVitals && (
-                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--sp-4)' }}>
-                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingVitals(false)}>Cancel</button>
-                          <button type="submit" className="btn btn-primary btn-sm">Save & Triage</button>
+                          <span className="vital-unit" style={{ marginTop: 2 }}>mmHg</span>
                         </div>
+                      ) : (
+                        <VitalItem
+                          label="Systolic / Diastolic BP"
+                          value={latestVitals?.systolic_bp ? `${latestVitals.systolic_bp}/${latestVitals.diastolic_bp}` : null}
+                          unit="mmHg"
+                          status={vitalStatus('systolic_bp', latestVitals?.systolic_bp, patient.age_group)}
+                          name="systolic_bp"
+                          editing={false}
+                        />
                       )}
-                    </form>
 
-                    {!editingVitals && (
-                      <div className="ai-alert-banner">
-                        <Brain size={16} color="var(--accent)" style={{ flexShrink: 0 }} />
-                        <span>AI is continuously analyzing incoming data. Reassess to get the latest priority.</span>
+                      <VitalItem
+                        label="Temperature"
+                        value={latestVitals?.temperature}
+                        unit="°C"
+                        status={vitalStatus('temperature', latestVitals?.temperature, patient.age_group)}
+                        name="temperature"
+                        editing={editingVitals}
+                        defaultValue={latestVitals?.temperature}
+                      />
+                      <VitalItem
+                        label="Consciousness"
+                        value={latestVitals?.mental_status}
+                        unit=""
+                        status={latestVitals?.mental_status === 'unresponsive' ? 'critical' : latestVitals?.mental_status === 'confused' ? 'abnormal' : ''}
+                        name="mental_status"
+                        editing={editingVitals}
+                        defaultValue={latestVitals?.mental_status}
+                      />
+                    </div>
+
+                    {editingVitals && (
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--sp-4)' }}>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingVitals(false)}>Cancel</button>
+                        <button type="submit" className="btn btn-primary btn-sm">Save & Triage</button>
                       </div>
                     )}
-                  </div>
+                  </form>
+
+                  {!editingVitals && (
+                    <div className="ai-alert-banner">
+                      <Brain size={16} color="var(--accent)" style={{ flexShrink: 0 }} />
+                      <span>AI is continuously analyzing incoming data. Reassess to get the latest priority.</span>
+                    </div>
+                  )}
+                </div>
 
                 {/* AI Recommendation Card (BETA) inline */}
                 {latestAssessment && !editingVitals && (
@@ -601,7 +666,7 @@ export default function PatientDetail() {
                       <span className="card-title" style={{ margin: 0 }}>AI Recommendation</span>
                       <span className="badge" style={{ background: 'rgba(234, 88, 12, 0.1)', color: 'var(--p2)', fontSize: '0.65rem', fontWeight: 700, padding: '2px 6px', borderRadius: '4px' }}>BETA</span>
                     </div>
-                    
+
                     <div className="ai-rec-grid">
                       <div className="ai-rec-col">
                         <span className="ai-rec-label">Recommended Priority</span>
@@ -609,20 +674,20 @@ export default function PatientDetail() {
                           <PriorityBadge priority={latestAssessment.priority} showLabel />
                         </div>
                       </div>
-                      
-                      <div className="ai-rec-col">
+
+                      <div className="ai-rec-col" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         <span className="ai-rec-label">Confidence</span>
-                        <div className="confidence-progress-wrap">
-                          <span className="confidence-text">{confPercent}%</span>
-                          <div className="progress-bar-bg">
-                            <div 
-                              className="progress-bar-fill" 
-                              style={{ width: `${confPercent}%` }}
-                            />
-                          </div>
+                        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <ConfidenceBadge
+                            confidence={latestAssessment.confidence}
+                            label={latestAssessment.confidence_label}
+                            breakdown={latestAssessment.confidence_breakdown}
+                            showOverride={true}
+                            onOverride={() => setOverrideOpen(true)}
+                          />
                         </div>
                       </div>
-                      
+
                       <div className="ai-rec-col">
                         <span className="ai-rec-label">Rationale (Top Factors)</span>
                         <ul className="rationale-list">
@@ -855,14 +920,46 @@ export default function PatientDetail() {
                       <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0 }}>
                         {nextStepText}
                       </p>
-                      <button 
-                        className="btn-reassess-cta" 
-                        onClick={handleReassess} 
+                      <button
+                        className="btn-reassess-cta"
+                        onClick={handleReassess}
                         disabled={reassessing}
                         style={{ marginTop: 'var(--sp-2)' }}
                       >
                         <RefreshCw size={14} className={reassessing ? 'spin' : ''} />
                         {reassessing ? 'Reassessing...' : 'Reassess Patient'}
+                      </button>
+
+                      <button
+                        className="btn btn-warning"
+                        onClick={async () => {
+                          try {
+                            await api.post('/simulation/deteriorate/', { patient_id: id });
+                            alert("Deterioration simulated! Vitals updated and patient re-triaged.");
+                            load();
+                          } catch (err) {
+                            alert("Failed to simulate deterioration: " + (err.response?.data?.error || err.message));
+                          }
+                        }}
+                        style={{
+                          marginTop: 'var(--sp-2)',
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          padding: '10px',
+                          borderRadius: 'var(--r-md)',
+                          fontWeight: 700,
+                          fontSize: '0.82rem',
+                          background: 'var(--p2)',
+                          color: '#fff',
+                          border: 'none',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <TrendingDown size={14} />
+                        Simulate Deterioration
                       </button>
                     </div>
                   </div>
@@ -931,8 +1028,8 @@ export default function PatientDetail() {
                     <RiskFactorList riskFactors={a.risk_factors} uncertaintyFlags={a.uncertainty_flags} missingFields={a.missing_fields} />
                   </div>
                   {a.requires_human_review && (
-                      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 'var(--sp-3)', padding: 'var(--sp-3)', background: 'rgba(217,119,6,0.06)', borderRadius: 'var(--r-md)', borderLeft: '3px solid var(--p3)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                        This assessment requires human review
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 'var(--sp-3)', padding: 'var(--sp-3)', background: 'rgba(217,119,6,0.06)', borderRadius: 'var(--r-md)', border: '1px solid var(--p3-border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      This assessment requires human review
                     </p>
                   )}
                   {a.ai_decision_support && (
@@ -1008,108 +1105,108 @@ export default function PatientDetail() {
         </main>
 
 
-      {overrideOpen && (
-        <OverrideDialog
-          patient={patient}
-          currentAssessment={latestAssessment}
-          onClose={() => setOverrideOpen(false)}
-          onDone={() => { setOverrideOpen(false); load() }}
-        />
-      )}
-      
-      {actionModal.isOpen && (
-        <div className="dialog-overlay" onClick={e => e.target === e.currentTarget && closeActionModal()}>
-          <div className="dialog-box" style={{ maxWidth: '520px', width: '90vw' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: 'var(--sp-2)', marginBottom: 'var(--sp-4)' }}>
-              <h2 className="dialog-title" style={{ margin: 0 }}>
-                {actionModal.type === 'symptoms' ? 'Record Symptoms' : 'Resolve Patient Identity'}
-              </h2>
-              <button className="btn btn-ghost btn-icon" onClick={closeActionModal} aria-label="Close">
-                <X size={16} />
-              </button>
-            </div>
+        {overrideOpen && (
+          <OverrideDialog
+            patient={patient}
+            currentAssessment={latestAssessment}
+            onClose={() => setOverrideOpen(false)}
+            onDone={() => { setOverrideOpen(false); load() }}
+          />
+        )}
 
-            {actionModal.type === 'symptoms' ? (
-              <form onSubmit={async (e) => {
-                e.preventDefault();
-                const symptomsText = e.target.symptoms_text.value;
-                if (!symptomsText.trim()) return;
-                try {
-                  await addObservation(patient.id, { raw_text: symptomsText });
-                  await reassessPatient({ patient_id: patient.id, trigger: 'symptom_update' });
-                  alert("Symptoms recorded and triage updated!");
-                  closeActionModal();
-                  load();
-                } catch (err) {
-                  alert(err.message || "Failed to save symptoms.");
-                }
-              }}>
-                <div className="form-group" style={{ marginBottom: '16px' }}>
-                  <label className="form-label" htmlFor="detail-popup-symptoms">New Symptoms / Clinical Issues</label>
-                  <textarea
-                    id="detail-popup-symptoms"
-                    name="symptoms_text"
-                    className="form-textarea"
-                    style={{ height: '120px', width: '100%', padding: '8px' }}
-                    placeholder="Describe new symptoms, issues, or changes in clinical presentation (e.g. sudden onset of severe abdominal pain, chest pain radiating to back, or severe breathing difficulties)"
-                    required
-                  />
-                </div>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                  <button type="button" className="btn btn-ghost" onClick={closeActionModal}>Cancel</button>
-                  <button type="submit" className="btn btn-primary">Save & Triage</button>
-                </div>
-              </form>
-            ) : (
-              <div>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 'var(--sp-4)' }}>
-                  This patient is registered with temporary ID: <strong>{patient.patient_identifier}</strong>.
-                  Provide their standard ABHA/Aadhaar/Phone number to link historic records.
-                </p>
-                <div className="form-group">
-                  <label className="form-label" htmlFor="detail-popup-lookup-id">
-                    Standard Patient Identifier
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>(e.g. ABHA-4221-5582)</span>
-                  </label>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <input
-                      type="text"
-                      id="detail-popup-lookup-id"
-                      className="form-input"
-                      style={{ flex: 1, backgroundColor: resLocked ? 'var(--bg-hover)' : 'inherit', cursor: resLocked ? 'not-allowed' : 'text' }}
-                      disabled={resLocked}
+        {actionModal.isOpen && (
+          <div className="dialog-overlay" onClick={e => e.target === e.currentTarget && closeActionModal()}>
+            <div className="dialog-box" style={{ maxWidth: '520px', width: '90vw' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: 'var(--sp-2)', marginBottom: 'var(--sp-4)' }}>
+                <h2 className="dialog-title" style={{ margin: 0 }}>
+                  {actionModal.type === 'symptoms' ? 'Record Symptoms' : 'Resolve Patient Identity'}
+                </h2>
+                <button className="btn btn-ghost btn-icon" onClick={closeActionModal} aria-label="Close">
+                  <X size={16} />
+                </button>
+              </div>
+
+              {actionModal.type === 'symptoms' ? (
+                <form onSubmit={async (e) => {
+                  e.preventDefault();
+                  const symptomsText = e.target.symptoms_text.value;
+                  if (!symptomsText.trim()) return;
+                  try {
+                    await addObservation(patient.id, { raw_text: symptomsText });
+                    await reassessPatient({ patient_id: patient.id, trigger: 'symptom_update' });
+                    alert("Symptoms recorded and triage updated!");
+                    closeActionModal();
+                    load();
+                  } catch (err) {
+                    alert(err.message || "Failed to save symptoms.");
+                  }
+                }}>
+                  <div className="form-group" style={{ marginBottom: '16px' }}>
+                    <label className="form-label" htmlFor="detail-popup-symptoms">New Symptoms / Clinical Issues</label>
+                    <textarea
+                      id="detail-popup-symptoms"
+                      name="symptoms_text"
+                      className="form-textarea"
+                      style={{ height: '120px', width: '100%', padding: '8px' }}
+                      placeholder="Describe new symptoms, issues, or changes in clinical presentation (e.g. sudden onset of severe abdominal pain, chest pain radiating to back, or severe breathing difficulties)"
+                      required
                     />
-                    {resLocked ? (
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-icon"
-                        onClick={() => {
-                          setResLocked(false);
-                          const box = document.getElementById("detail-lookup-resolution-result");
-                          if (box) {
-                            box.style.display = 'none';
-                            box.innerHTML = '';
-                            delete box.dataset.resolved;
-                          }
-                        }}
-                        title="Edit Patient Identifier"
-                        style={{ padding: '8px' }}
-                      >
-                        <Pencil size={14} />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={async () => {
-                          const identifierInput = document.getElementById("detail-popup-lookup-id").value;
-                          if (!identifierInput.trim()) return;
-                          try {
-                            const res = await lookupPatient(identifierInput);
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn btn-ghost" onClick={closeActionModal}>Cancel</button>
+                    <button type="submit" className="btn btn-primary">Save & Triage</button>
+                  </div>
+                </form>
+              ) : (
+                <div>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 'var(--sp-4)' }}>
+                    This patient is registered with temporary ID: <strong>{patient.patient_identifier}</strong>.
+                    Provide their standard ABHA/Aadhaar/Phone number to link historic records.
+                  </p>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="detail-popup-lookup-id">
+                      Standard Patient Identifier
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>(e.g. ABHA-4221-5582)</span>
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        id="detail-popup-lookup-id"
+                        className="form-input"
+                        style={{ flex: 1, backgroundColor: resLocked ? 'var(--bg-hover)' : 'inherit', cursor: resLocked ? 'not-allowed' : 'text' }}
+                        disabled={resLocked}
+                      />
+                      {resLocked ? (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-icon"
+                          onClick={() => {
+                            setResLocked(false);
                             const box = document.getElementById("detail-lookup-resolution-result");
-                            box.style.display = 'block';
-                            if (res.data.exists) {
-                              box.innerHTML = `
+                            if (box) {
+                              box.style.display = 'none';
+                              box.innerHTML = '';
+                              delete box.dataset.resolved;
+                            }
+                          }}
+                          title="Edit Patient Identifier"
+                          style={{ padding: '8px' }}
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={async () => {
+                            const identifierInput = document.getElementById("detail-popup-lookup-id").value;
+                            if (!identifierInput.trim()) return;
+                            try {
+                              const res = await lookupPatient(identifierInput);
+                              const box = document.getElementById("detail-lookup-resolution-result");
+                              box.style.display = 'block';
+                              if (res.data.exists) {
+                                box.innerHTML = `
                                 <div style="padding: 10px; border: 1px solid var(--p5-border); background: var(--p5-bg); border-radius: var(--r-md); font-size: 0.8rem; margin-top: 10px;">
                                   <h4 style="margin: 0 0 4px 0; color: var(--p5);">✓ Existing Patient Found</h4>
                                   <p style="margin: 2px 0;"><strong>Name:</strong> ${res.data.demographics.name}</p>
@@ -1118,71 +1215,71 @@ export default function PatientDetail() {
                                   <p style="margin: 8px 0 0 0; font-size: 0.72rem; color: var(--text-secondary);">Click "Link and Merge Profile" to resolve identity.</p>
                                 </div>
                               `;
-                              box.dataset.resolved = JSON.stringify({
-                                patient_identifier: identifierInput,
-                                name: res.data.demographics.name,
-                                age: res.data.demographics.age,
-                                sex: res.data.demographics.sex,
-                                relevant_history: res.data.demographics.relevant_history,
-                              });
-                              setResLocked(true);
-                            } else {
-                              box.innerHTML = `
+                                box.dataset.resolved = JSON.stringify({
+                                  patient_identifier: identifierInput,
+                                  name: res.data.demographics.name,
+                                  age: res.data.demographics.age,
+                                  sex: res.data.demographics.sex,
+                                  relevant_history: res.data.demographics.relevant_history,
+                                });
+                                setResLocked(true);
+                              } else {
+                                box.innerHTML = `
                                 <div style="padding: 10px; border: 1px solid var(--border); background: var(--bg-hover); border-radius: var(--r-md); font-size: 0.8rem; margin-top: 10px;">
                                   <h4 style="margin: 0 0 4px 0; color: var(--text-secondary);">New Patient Identifier</h4>
                                   <p style="margin: 2px 0;">No past records found for standard ID <strong>${identifierInput}</strong>.</p>
                                   <p style="margin: 4px 0 0 0; font-size: 0.72rem; color: var(--text-secondary);">Click "Link and Merge Profile" to standardise identity with current details.</p>
                                 </div>
                               `;
-                              box.dataset.resolved = JSON.stringify({
-                                patient_identifier: identifierInput,
-                                name: patient.name,
-                                age: patient.age,
-                                sex: patient.sex,
-                                relevant_history: patient.relevant_history,
-                              });
-                              setResLocked(true);
+                                box.dataset.resolved = JSON.stringify({
+                                  patient_identifier: identifierInput,
+                                  name: patient.name,
+                                  age: patient.age,
+                                  sex: patient.sex,
+                                  relevant_history: patient.relevant_history,
+                                });
+                                setResLocked(true);
+                              }
+                            } catch (err) {
+                              alert("Lookup failed");
                             }
-                          } catch (err) {
-                            alert("Lookup failed");
-                          }
-                        }}
-                      >
-                        Lookup
-                      </button>
-                    )}
+                          }}
+                        >
+                          Lookup
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div id="detail-lookup-resolution-result" style={{ display: 'none', marginBottom: '20px' }}></div>
+
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn btn-ghost" onClick={closeActionModal}>Cancel</button>
+                    <button type="button" className="btn btn-primary" onClick={async () => {
+                      const box = document.getElementById("detail-lookup-resolution-result");
+                      let resolved = {};
+                      if (!box || !box.dataset.resolved) {
+                        const identifierInput = document.getElementById("detail-popup-lookup-id").value;
+                        if (!identifierInput.trim()) { alert("Enter a standard ID"); return; }
+                        resolved = { patient_identifier: identifierInput };
+                      } else {
+                        resolved = JSON.parse(box.dataset.resolved);
+                      }
+                      try {
+                        await api.patch(`/patients/${patient.id}/`, resolved);
+                        alert("Identity resolved, demographic data updated and triage reassessed!");
+                        closeActionModal();
+                        load();
+                      } catch (err) {
+                        alert("Resolution failed");
+                      }
+                    }}>Link and Merge Profile</button>
                   </div>
                 </div>
-
-                <div id="detail-lookup-resolution-result" style={{ display: 'none', marginBottom: '20px' }}></div>
-
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                  <button type="button" className="btn btn-ghost" onClick={closeActionModal}>Cancel</button>
-                  <button type="button" className="btn btn-primary" onClick={async () => {
-                    const box = document.getElementById("detail-lookup-resolution-result");
-                    let resolved = {};
-                    if (!box || !box.dataset.resolved) {
-                      const identifierInput = document.getElementById("detail-popup-lookup-id").value;
-                      if (!identifierInput.trim()) { alert("Enter a standard ID"); return; }
-                      resolved = { patient_identifier: identifierInput };
-                    } else {
-                      resolved = JSON.parse(box.dataset.resolved);
-                    }
-                    try {
-                      await api.patch(`/patients/${patient.id}/`, resolved);
-                      alert("Identity resolved, demographic data updated and triage reassessed!");
-                      closeActionModal();
-                      load();
-                    } catch (err) {
-                      alert("Resolution failed");
-                    }
-                  }}>Link and Merge Profile</button>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
       </div>
     </div>
   )

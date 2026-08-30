@@ -14,6 +14,7 @@ class PatientStatus(models.TextChoices):
     IN_PROGRESS = 'in_progress', 'In Progress'
     DISCHARGED = 'discharged', 'Discharged'
     ADMITTED = 'admitted', 'Admitted'
+    REFERRED = 'referred', 'Referred'
 
 
 class Priority(models.TextChoices):
@@ -39,6 +40,18 @@ class Patient(models.Model):
     current_queue = models.CharField(max_length=50, blank=True)
     current_destination = models.CharField(max_length=50, blank=True)
     status = models.CharField(max_length=20, choices=PatientStatus.choices, default=PatientStatus.WAITING)
+    
+    # Clinician and Scan tracking
+    assigned_doctor = models.CharField(max_length=100, blank=True, null=True)
+    under_scan = models.BooleanField(default=False)
+    scan_reports = models.TextField(blank=True, default='')
+    
+    # OS dynamic scheduling and AI degradation metrics
+    dynamic_priority_score = models.FloatField(default=0.0)
+    degradation_rate = models.FloatField(default=0.0)
+    scheduler_state = models.CharField(max_length=20, default='ready')
+    last_attended_time = models.DateTimeField(null=True, blank=True)
+
     # Simulation metadata
     scenario_tag = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

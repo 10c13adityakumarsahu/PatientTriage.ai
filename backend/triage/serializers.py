@@ -12,7 +12,8 @@ class RiskAssessmentSerializer(serializers.ModelSerializer):
             'id', 'patient_id', 'priority', 'confidence', 'confidence_label',
             'risk_factors', 'uncertainty_flags', 'missing_fields',
             'recommended_action', 'recommended_destination',
-            'requires_human_review', 'model_version', 'ai_decision_support', 'trigger', 'created_at'
+            'requires_human_review', 'model_version', 'ai_decision_support',
+            'confidence_breakdown', 'ai_mode', 'trigger', 'created_at'
         ]
 
     def get_confidence_label(self, obj):

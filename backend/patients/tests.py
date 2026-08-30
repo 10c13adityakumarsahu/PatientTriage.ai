@@ -85,3 +85,23 @@ class PatientIntakeAITests(TestCase):
         self.assertEqual(temp_patient.relevant_history, 'Hypertension')
         self.assertTrue(temp_patient.assessments.filter(trigger='identity_resolved').exists())
 
+    def test_scan_workflow(self):
+        # Mark under scan
+        resp = self.client.post(f'/api/v1/patients/{self.patient.id}/mark-under-scan/')
+        self.assertEqual(resp.status_code, 200)
+        self.patient.refresh_from_db()
+        self.assertTrue(self.patient.under_scan)
+        self.assertEqual(self.patient.scheduler_state, 'blocked')
+        
+        # Complete scan
+        payload = {
+            'scan_findings': 'Acute subdural hemorrhage with mass effect.',
+            'scan_type': 'CT Brain'
+        }
+        resp = self.client.post(f'/api/v1/patients/{self.patient.id}/submit-scan-reports/', payload, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.patient.refresh_from_db()
+        self.assertFalse(self.patient.under_scan)
+        self.assertEqual(self.patient.scheduler_state, 'ready')
+        self.assertEqual(self.patient.scan_reports, 'Acute subdural hemorrhage with mass effect.')
+
