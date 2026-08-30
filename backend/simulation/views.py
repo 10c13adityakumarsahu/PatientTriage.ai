@@ -53,6 +53,10 @@ def tick(request):
             state.sim_time += timedelta(minutes=minutes)
             state.save()
             
+            # Gradually populate vitals
+            from .seeder import simulate_gradual_flow
+            simulate_gradual_flow(state.sim_time)
+            
             waiting = Patient.objects.filter(status='waiting')
             for patient in waiting:
                 from decision_engine.age_profiles import get_wait_threshold
@@ -98,6 +102,10 @@ def tick(request):
         state.current_stage = 'wait_reassessment'
         state.save()
 
+        # Gradually populate vitals
+        from .seeder import simulate_gradual_flow
+        simulate_gradual_flow(state.sim_time)
+
         waiting = Patient.objects.filter(status='waiting')
         for patient in waiting:
             from decision_engine.age_profiles import get_wait_threshold
@@ -140,6 +148,14 @@ def deteriorate(request):
 @api_view(['POST'])
 def surge(request):
     """POST /simulation/surge/ — Activate 3× surge."""
+    from simulation.models import SimulationState
+    sim = SimulationState.objects.first()
+    if sim and sim.surge_active:
+        return Response({
+            'error': 'Surge has already been activated.',
+            'surge_active': True,
+        }, status=status.HTTP_400_BAD_REQUEST)
+
     patients = trigger_surge()
     return Response({
         'message': f'Surge activated. Added {len(patients)} patients.',
@@ -184,3 +200,13 @@ def sim_status(request):
             'current_stage': state.current_stage,
         })
     return Response({'running': False, 'surge_active': False})
+
+
+@api_view(['GET'])
+def next_patient_data(request):
+    """GET /simulation/next-patient-data/ — Get demographics for next unsaved synthetic patient."""
+    from .seeder import get_next_patient_intake_data
+    data = get_next_patient_intake_data()
+    if data:
+        return Response(data)
+    return Response({'error': 'All synthetic patients have been registered.'}, status=status.HTTP_404_NOT_FOUND)

@@ -94,6 +94,21 @@ def patient_detail(request, patient_id):
     if (patient.assigned_doctor and patient.assigned_doctor != old_doctor) or (patient.status == 'in_progress' and old_status != 'in_progress'):
         patient.last_attended_time = current_time
 
+    # Dynamic sequence and logic for dispositions (Admit / Refer / Discharge)
+    if patient.status != old_status and patient.status in ['admitted', 'referred', 'discharged']:
+        if patient.status == 'admitted':
+            # Admit sequence: patient is moved to observation bed, priority changed to P5
+            patient.current_priority = 'P5'
+            patient.dynamic_priority_score = 0.0
+            patient.assigned_doctor = None  # Free up ED doctor
+            patient.under_scan = False
+        else:
+            # Discharge / Refer sequence: patient leaves ED, priority cleared, resources freed
+            patient.current_priority = None
+            patient.dynamic_priority_score = 0.0
+            patient.assigned_doctor = None
+            patient.under_scan = False
+
     patient.save()
 
     # Recalculate resource utilization
@@ -289,11 +304,7 @@ def submit_scan_reports(request, patient_id):
 
     scan_findings = request.data.get('scan_findings', '')
     scan_type = request.data.get('scan_type', 'Diagnostic Scan')
-
-    if not scan_findings:
-        # Generate default reports based on chief complaint if not provided
-        from routing.scheduler import generate_simulated_report
-        scan_findings = generate_simulated_report(patient.chief_complaint, patient.scenario_tag)
+    skip_report = request.data.get('skip_report', False)
 
     from simulation.models import SimulationState
     from django.utils import timezone
@@ -302,15 +313,32 @@ def submit_scan_reports(request, patient_id):
 
     patient.under_scan = False
     patient.scheduler_state = 'ready'
-    patient.scan_reports = scan_findings
     patient.last_attended_time = current_time
 
-    # Trigger AI report re-evaluation
-    from decision_engine.ai_assistant import reevaluate_reports_ai
-    ai_res = reevaluate_reports_ai(patient.chief_complaint, scan_type, scan_findings)
-
     old_priority = patient.current_priority
-    new_priority = ai_res.get("priority", "P4")
+
+    if skip_report:
+        new_priority = patient.current_priority or "P4"
+        scan_findings = "No report uploaded (skipped by clinician)."
+        patient.scan_reports = scan_findings
+        ai_res = {
+            "priority": new_priority,
+            "confidence": 1.0,
+            "findings_status": "Normal",
+            "explanation": "Scan completed without report upload."
+        }
+    else:
+        if not scan_findings:
+            # Generate default reports based on chief complaint if not provided
+            from routing.scheduler import generate_simulated_report
+            scan_findings = generate_simulated_report(patient.chief_complaint, patient.scenario_tag)
+
+        patient.scan_reports = scan_findings
+
+        # Trigger AI report re-evaluation
+        from decision_engine.ai_assistant import reevaluate_reports_ai
+        ai_res = reevaluate_reports_ai(patient.chief_complaint, scan_type, scan_findings)
+        new_priority = ai_res.get("priority", "P4")
 
     patient.current_priority = new_priority
     patient.current_destination = "general_emergency" if ai_res.get("confidence", 1.0) < 0.60 else (patient.current_destination or "general_emergency")

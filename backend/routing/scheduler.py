@@ -82,8 +82,18 @@ def recalculate_resource_occupancy():
                         resource_map['treatment_room'].occupied += 1
                         
     # 3. Save resources with capped values
+    from simulation.models import SimulationState
+    sim_state = SimulationState.objects.first()
+    surge_active = sim_state.surge_active if sim_state else False
+
     for r in resources:
-        r.occupied = min(r.capacity, r.occupied)
+        if surge_active:
+            # Boost resource occupancy during a surge to reflect high patient load
+            surge_occupied = max(1, int(r.capacity * 0.6))
+            r.occupied = min(r.capacity, r.occupied + surge_occupied)
+        else:
+            r.occupied = min(r.capacity, r.occupied)
+            
         if r.occupied >= r.capacity:
             r.status = 'full'
         else:
@@ -145,6 +155,19 @@ def run_scheduler_cycle(stage=None):
                 confidence=ai_res.get("confidence", 0.90)
             )
             
+            # Re-create QueueEntry to place them back in queue
+            QueueEntry.objects.filter(patient=patient, active=True).update(active=False, exited_at=current_time)
+            QueueEntry.objects.create(
+                patient=patient,
+                queue_type=patient.current_queue or "general_emergency",
+                priority=new_priority,
+                active=True
+            )
+            
+            # Broadcast the scan completed event to live websockets
+            from simulation.broadcast import broadcast_event
+            broadcast_event('patient.updated', {'patient_id': str(patient.id), 'type': 'scan_completed'})
+
             # Give unblocked patient an I/O priority boost (+0.25)
             patient._io_boost = True
             completed_scans.append(patient)

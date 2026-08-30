@@ -343,7 +343,7 @@ RESOURCES_SEED = [
 
 def seed_baseline():
     """
-    Create baseline scenario with 3 initial synthetic patients.
+    Create baseline scenario with 15 initial synthetic patients.
     Deterministic — same patients every time seed is called on a clean DB.
     """
     now = timezone.now()
@@ -365,15 +365,18 @@ def seed_baseline():
     )
 
     created_patients = []
-    for patient_orig in SYNTHETIC_PATIENTS[:3]:
+    for patient_orig in SYNTHETIC_PATIENTS[:15]:
         patient_data = patient_orig.copy()
         arrival_time = now - timedelta(minutes=patient_data.pop('minutes_ago', 0))
+        
+        # Pop vitals and deterioration vitals so they are not saved during seed
         vitals_data = patient_data.pop('vitals', None)
         deterioration_vitals = patient_data.pop('deterioration_vitals', None)
 
         patient = Patient.objects.create(
             arrival_time=arrival_time,
             status='waiting',
+            scheduler_state='blocked',
             **patient_data,
         )
 
@@ -385,28 +388,6 @@ def seed_baseline():
         else:
             patient.age_group = 'adult'
         patient.save(update_fields=['age_group'])
-
-        # Create initial vital reading
-        if vitals_data:
-            VitalReading.objects.create(
-                patient=patient,
-                recorded_at=arrival_time + timedelta(minutes=3),
-                **vitals_data
-            )
-
-        # Normalize chief complaint into note
-        from decision_engine.normalizer import normalize_symptoms
-        tokens, flags = normalize_symptoms(patient.chief_complaint)
-        PatientNote.objects.create(
-            patient=patient,
-            raw_text=patient.chief_complaint,
-            normalized_symptoms=tokens,
-            extracted_flags=flags,
-            source='intake',
-        )
-
-        # Run initial triage assessment
-        assessment = run_triage_assessment(patient, trigger='initial_assessment')
 
         # Store deterioration vitals on patient for later use
         if deterioration_vitals:
@@ -424,6 +405,16 @@ def seed_baseline():
                 'age_group': patient.age_group,
             },
             trigger='seed_baseline',
+        )
+
+    # Create default active QueueEntry for each patient to place them in general waiting queue
+    from queues.models import QueueEntry
+    for p in created_patients:
+        QueueEntry.objects.create(
+            patient=p,
+            queue_type='general_emergency',
+            priority='P4',
+            active=True
         )
 
     return created_patients
@@ -568,6 +559,8 @@ def trigger_surge():
     """
     sim = SimulationState.objects.first()
     if sim:
+        if sim.surge_active:
+            return []
         sim.surge_active = True
         sim.save()
 
@@ -627,6 +620,9 @@ def trigger_surge():
         trigger='surge_trigger',
     )
 
+    from routing.scheduler import recalculate_resource_occupancy
+    recalculate_resource_occupancy()
+
     from simulation.broadcast import broadcast_event
     broadcast_event('surge.started', {'active': True, 'extra_patients': len(surge_patients)})
 
@@ -660,3 +656,77 @@ def _clear_simulation_data():
     SimulationState.objects.all().delete()
     # AuditEvents are append-only — keep them across resets for demo auditability
     # but add a reset marker event
+
+
+def simulate_gradual_flow(current_time):
+    """
+    Find patients in 'waiting' status who have no vitals,
+    and gradually populate vitals for some of them, normalize symptoms, and run triage.
+    This simulates gradual intake completion and triage assessment flow during demo runs.
+    """
+    from patients.models import Patient, VitalReading, PatientNote
+    from triage.services import run_triage_assessment
+    from django.db.models import Count
+    
+    # Annotate patients with vital reading count
+    pending_patients = Patient.objects.annotate(vitals_count=Count('vital_readings')).filter(status='waiting', vitals_count=0)
+    
+    if not pending_patients.exists():
+        return 0
+        
+    # Process exactly 1 patient per tick for a true one-by-one sequential flow
+    patients_to_process = list(pending_patients[:1])
+    processed_count = 0
+    
+    for patient in patients_to_process:
+        # Find curated vitals from the static SYNTHETIC_PATIENTS list matching this patient
+        matched_data = None
+        for p_orig in SYNTHETIC_PATIENTS:
+            if p_orig['patient_identifier'] == patient.patient_identifier:
+                matched_data = p_orig
+                break
+                
+        if matched_data and 'vitals' in matched_data:
+            vitals = matched_data['vitals']
+            # Create vital reading
+            VitalReading.objects.create(
+                patient=patient,
+                recorded_at=current_time,
+                **vitals
+            )
+            # Create symptoms note/observations
+            from decision_engine.normalizer import normalize_symptoms
+            tokens, flags = normalize_symptoms(patient.chief_complaint)
+            PatientNote.objects.create(
+                patient=patient,
+                raw_text=patient.chief_complaint,
+                normalized_symptoms=tokens,
+                extracted_flags=flags,
+                source='intake'
+            )
+            # Run triage assessment
+            run_triage_assessment(patient, trigger='gradual_simulation_tick')
+            processed_count += 1
+            
+    return processed_count
+
+
+def get_next_patient_intake_data():
+    """
+    Find the next patient from SYNTHETIC_PATIENTS that hasn't been registered in the database yet,
+    and return their intake-related demographics (demographics & chief complaint).
+    """
+    from patients.models import Patient
+    existing_tags = set(Patient.objects.filter(scenario_tag__isnull=False).values_list('scenario_tag', flat=True))
+    for p in SYNTHETIC_PATIENTS:
+        if p['scenario_tag'] not in existing_tags:
+            return {
+                'name': p['name'],
+                'patient_identifier': p['patient_identifier'],
+                'age': p['age'],
+                'sex': p['sex'],
+                'chief_complaint': p['chief_complaint'],
+                'history_available': p['history_available'],
+                'relevant_history': p['relevant_history'],
+            }
+    return None

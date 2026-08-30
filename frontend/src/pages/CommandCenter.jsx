@@ -1,7 +1,7 @@
 /** Command Center: live ED board, intake, and clinician actions. */
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getLiveQueue, getQueueStats, getAlerts, getResources, createPatient, lookupPatient, addVitals, addObservation, assessPatient, reassessPatient, aiAnalyze, getAiMode, api } from '../api'
+import { getLiveQueue, getQueueStats, getAlerts, getResources, createPatient, lookupPatient, addVitals, addObservation, assessPatient, reassessPatient, aiAnalyze, getAiMode, tickSimulation, getNextPatientData, api } from '../api'
 import { useStore } from '../store'
 import { useWebSocket } from '../useWebSocket'
 import PriorityBadge from '../components/PriorityBadge'
@@ -133,6 +133,8 @@ function VitalItem({ label, value, unit, status, name, editing, defaultValue }) 
           <input
             type="number"
             step={name === 'temperature' ? '0.1' : '1'}
+            min={name === 'spo2' ? '50' : undefined}
+            max={name === 'spo2' ? '100' : undefined}
             name={name}
             className="vital-input-edit"
             defaultValue={defaultValue || ''}
@@ -149,6 +151,107 @@ function VitalItem({ label, value, unit, status, name, editing, defaultValue }) 
     </div>
   );
 }
+
+// Simulated mouse cursor helpers for visual auto-play demo
+const createSimulatedCursor = () => {
+  let cur = document.getElementById("simulated-cursor");
+  if (!cur) {
+    cur = document.createElement("div");
+    cur.id = "simulated-cursor";
+    cur.style.position = "fixed";
+    cur.style.width = "20px";
+    cur.style.height = "20px";
+    cur.style.background = "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='%237c3aed' stroke='white' stroke-width='2'><path d='M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z'/></svg>\") no-repeat";
+    cur.style.pointerEvents = "none";
+    cur.style.zIndex = "999999";
+    cur.style.transition = "all 0.9s cubic-bezier(0.25, 0.8, 0.25, 1)";
+    cur.style.left = "20px";
+    cur.style.top = "20px";
+    document.body.appendChild(cur);
+  }
+  return cur;
+};
+
+const removeSimulatedCursor = () => {
+  const cur = document.getElementById("simulated-cursor");
+  if (cur) cur.remove();
+};
+
+const moveCursorToElement = (selectorOrEl, callback) => {
+  const cur = createSimulatedCursor();
+  let el = typeof selectorOrEl === 'string' ? document.querySelector(selectorOrEl) : selectorOrEl;
+  
+  const performMove = (targetEl) => {
+    const rect = targetEl.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    cur.style.left = `${x}px`;
+    cur.style.top = `${y}px`;
+    
+    setTimeout(() => {
+      // Flash click indicator (ripple)
+      const ripple = document.createElement("div");
+      ripple.style.position = "fixed";
+      ripple.style.left = `${x - 12}px`;
+      ripple.style.top = `${y - 12}px`;
+      ripple.style.width = "24px";
+      ripple.style.height = "24px";
+      ripple.style.border = "2.5px solid var(--accent)";
+      ripple.style.borderRadius = "50%";
+      ripple.style.pointerEvents = "none";
+      ripple.style.zIndex = "999999";
+      ripple.style.transition = "all 0.4s ease-out";
+      ripple.style.transform = "scale(0.1)";
+      ripple.style.opacity = "1";
+      document.body.appendChild(ripple);
+      
+      void ripple.offsetWidth;
+      ripple.style.transform = "scale(1.5)";
+      ripple.style.opacity = "0";
+      setTimeout(() => ripple.remove(), 400);
+
+      // Trigger click
+      targetEl.click();
+      callback && callback(true);
+    }, 1000);
+  };
+
+  if (!el) {
+    setTimeout(() => {
+      el = typeof selectorOrEl === 'string' ? document.querySelector(selectorOrEl) : selectorOrEl;
+      if (!el) {
+        callback && callback(false);
+        return;
+      }
+      performMove(el);
+    }, 300);
+  } else {
+    performMove(el);
+  }
+};
+
+const typeIntoInput = (selectorOrEl, text, callback) => {
+  let el = typeof selectorOrEl === 'string' ? document.querySelector(selectorOrEl) : selectorOrEl;
+  if (!el) {
+    callback && callback(false);
+    return;
+  }
+  el.focus();
+  let index = 0;
+  el.value = "";
+  const interval = setInterval(() => {
+    if (index < text.length) {
+      el.value += text[index];
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      index++;
+    } else {
+      clearInterval(interval);
+      el.blur();
+      callback && callback(true);
+    }
+  }, 40);
+};
 
 export default function CommandCenter() {
   const navigate = useNavigate()
@@ -185,6 +288,224 @@ export default function CommandCenter() {
     type: '', // 'vitals' or 'identity' or 'symptoms'
     patient: null
   })
+
+  const [scanModalPatient, setScanModalPatient] = useState(null)
+
+  const [simStage, setSimStage] = useState('wait_reassessment')
+  const [simPlaying, setSimPlaying] = useState(false)
+  const [prefilledVitals, setPrefilledVitals] = useState(null)
+  const isExecutingStepRef = useRef(false);
+
+  const getPrefilledVitalsForPatient = (patient) => {
+    if (!patient) return null;
+    const cc = (patient.chief_complaint || "").toLowerCase();
+    if (cc.includes("pain") || cc.includes("chest") || cc.includes("tightness")) {
+      return { heart_rate: 112, spo2: 92, respiratory_rate: 22, systolic_bp: 135, diastolic_bp: 82, temperature: 37.1, mental_status: 'alert' };
+    } else if (cc.includes("fever") || cc.includes("baby") || cc.includes("cough")) {
+      return { heart_rate: 145, spo2: 94, respiratory_rate: 45, systolic_bp: 92, diastolic_bp: 58, temperature: 39.8, mental_status: 'alert' };
+    } else if (cc.includes("trauma") || cc.includes("crash") || cc.includes("unconscious")) {
+      return { heart_rate: 118, spo2: 88, respiratory_rate: 28, systolic_bp: 88, diastolic_bp: 52, temperature: 36.5, mental_status: 'unresponsive' };
+    }
+    return { heart_rate: 78, spo2: 98, respiratory_rate: 17, systolic_bp: 122, diastolic_bp: 78, temperature: 36.8, mental_status: 'alert' };
+  };
+
+  const handleStepStage = async () => {
+    // If a step is already in progress, skip this tick to prevent overlaps
+    if (isExecutingStepRef.current) {
+      return;
+    }
+    
+    const activeStage = simStage;
+    
+    if (activeStage === 'wait_reassessment') {
+      setFilterTab('vitals_pending');
+
+      const patientWithNoVitals = queue.find(p => getCareSequence(p).activeIndex === 0);
+      
+      if (!patientWithNoVitals) {
+        // No patient waiting for vitals, let's do a sequential intake!
+        try {
+          const res = await getNextPatientData();
+          if (res.data) {
+            isExecutingStepRef.current = true;
+            moveCursorToElement('#btn-intake-next', (success) => {
+              if (success) {
+                setTimeout(() => {
+                  moveCursorToElement('#intake-name', () => {
+                    setTimeout(() => {
+                      moveCursorToElement('#intake-age', () => {
+                        setTimeout(() => {
+                          moveCursorToElement('#btn-submit-intake', () => {
+                            setTimeout(() => {
+                              isExecutingStepRef.current = false;
+                            }, 1500);
+                          });
+                        }, 800);
+                      });
+                    }, 800);
+                  });
+                }, 1500);
+              } else {
+                isExecutingStepRef.current = false;
+              }
+            });
+            return;
+          }
+        } catch (e) {
+          isExecutingStepRef.current = false;
+        }
+      } else {
+        // A patient needs vitals! Let's simulate recording vitals
+        const patient = patientWithNoVitals;
+        isExecutingStepRef.current = true;
+        
+        moveCursorToElement(`#btn-vitals-${patient.id}`, (success) => {
+          if (success) {
+            setTimeout(() => {
+              const prefilled = getPrefilledVitalsForPatient(patient);
+              setPrefilledVitals(prefilled);
+              
+              moveCursorToElement('#popup-hr', () => {
+                setTimeout(() => {
+                  moveCursorToElement('#popup-spo2', () => {
+                    setTimeout(() => {
+                      moveCursorToElement('#btn-submit-vitals', () => {
+                        setTimeout(() => {
+                          isExecutingStepRef.current = false;
+                        }, 1500);
+                      });
+                    }, 800);
+                  });
+                }, 800);
+              });
+            }, 1500);
+          } else {
+            isExecutingStepRef.current = false;
+          }
+        });
+        return;
+      }
+    } else if (activeStage === 'io_completion') {
+      setFilterTab('tests_suggested');
+      
+      // A. Complete scan for a patient under scan
+      const scannedPatient = queue.find(p => p.status === 'waiting' && p.under_scan);
+      if (scannedPatient) {
+        const btnId = `#btn-complete-scan-${scannedPatient.id}`;
+        const targetEl = document.querySelector(btnId);
+        if (targetEl) {
+          isExecutingStepRef.current = true;
+          moveCursorToElement(targetEl, () => {
+            setTimeout(() => {
+              isExecutingStepRef.current = false;
+              refresh();
+            }, 1500);
+          });
+          return;
+        }
+      } else {
+        // B. Start scan for a patient suggested scans
+        const suggestPatient = queue.find(p => p.status === 'waiting' && !p.under_scan && getCareSequence(p).activeIndex === 1);
+        if (suggestPatient) {
+          const btnId = `#btn-start-scan-${suggestPatient.id}`;
+          const targetEl = document.querySelector(btnId);
+          if (targetEl) {
+            isExecutingStepRef.current = true;
+            moveCursorToElement(targetEl, () => {
+              setTimeout(() => {
+                isExecutingStepRef.current = false;
+                refresh();
+              }, 1500);
+            });
+            return;
+          }
+        }
+      }
+    } else if (activeStage === 'priority_aging') {
+      setFilterTab('in_queue');
+      const targetEl = document.querySelector('#step-priority_aging');
+      if (targetEl) {
+        isExecutingStepRef.current = true;
+        moveCursorToElement(targetEl, async () => {
+          try {
+            const res = await tickSimulation({ minutes: 5, step: true });
+            if (res && res.data && res.data.next_stage) {
+              setSimStage(res.data.next_stage);
+            }
+            refresh();
+          } catch (err) {
+            setSimPlaying(false);
+          } finally {
+            setTimeout(() => {
+              isExecutingStepRef.current = false;
+            }, 1000);
+          }
+        });
+        return;
+      }
+    } else if (activeStage === 'core_allocation') {
+      setFilterTab('active_visits');
+      const targetEl = document.querySelector('#step-core_allocation');
+      if (targetEl) {
+        isExecutingStepRef.current = true;
+        moveCursorToElement(targetEl, async () => {
+          try {
+            const res = await tickSimulation({ minutes: 5, step: true });
+            if (res && res.data && res.data.next_stage) {
+              setSimStage(res.data.next_stage);
+            }
+            refresh();
+          } catch (err) {
+            setSimPlaying(false);
+          } finally {
+            setTimeout(() => {
+              isExecutingStepRef.current = false;
+            }, 1000);
+          }
+        });
+        return;
+      }
+    }
+    
+    try {
+      isExecutingStepRef.current = true;
+      const res = await tickSimulation({ minutes: 5, step: true });
+      if (res && res.data && res.data.next_stage) {
+        setSimStage(res.data.next_stage);
+      }
+      refresh();
+    } catch (err) {
+      setSimPlaying(false);
+      alert(err.message || "Failed to step stage");
+    } finally {
+      isExecutingStepRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    let timer = null;
+    let originalConfirm = window.confirm;
+    let originalPrompt = window.prompt;
+
+    if (simPlaying) {
+      isExecutingStepRef.current = false; // Reset lock on play
+      window.confirm = () => true;
+      window.prompt = () => ""; // Auto-generate standard findings
+      
+      handleStepStage();
+      timer = setInterval(() => {
+        handleStepStage();
+      }, 7000);
+    } else {
+      isExecutingStepRef.current = false; // Reset lock on pause
+      removeSimulatedCursor();
+    }
+    return () => {
+      window.confirm = originalConfirm;
+      window.prompt = originalPrompt;
+      if (timer) clearInterval(timer);
+    };
+  }, [simPlaying, simStage, queue]);
 
   const [expandedSections, setExpandedSections] = useState({
     critical: true,
@@ -421,9 +742,10 @@ export default function CommandCenter() {
       // 2. Assess Patient
       await assessPatient({ patient_id: pId });
 
-      // Clean up and navigate directly to the patient
+      // Clean up and keep on dashboard
       setShowIntake(false);
-      navigate(`/patient/${pId}`);
+      setFilterTab('vitals_pending');
+      refresh();
     } catch (err) {
       alert(err?.response?.data?.error || err.message || "Error submitting patient intake.");
     } finally {
@@ -774,7 +1096,7 @@ export default function CommandCenter() {
   }
 
   if (filterTab === 'all') {
-    filteredPatients = filteredPatients.filter(p => p.status === 'waiting' || p.status === 'in_progress')
+    filteredPatients = filteredPatients.filter(p => p.status === 'waiting' || p.status === 'in_progress' || p.status === 'admitted')
   } else if (filterTab === 'critical') {
     filteredPatients = filteredPatients.filter(p => (p.current_priority === 'P1' || p.current_priority === 'P2') && p.status === 'waiting')
   } else if (filterTab === 'vitals_pending') {
@@ -785,25 +1107,42 @@ export default function CommandCenter() {
     filteredPatients = filteredPatients.filter(p => getCareSequence(p).activeIndex === 2)
   } else if (filterTab === 'active_visits') {
     filteredPatients = filteredPatients.filter(p => p.status === 'in_progress')
+  } else if (filterTab === 'observation') {
+    filteredPatients = filteredPatients.filter(p => p.status === 'admitted')
   } else if (filterTab === 'completed') {
     filteredPatients = filteredPatients.filter(p => DISPOSITION_STATUSES.includes(p.status))
   }
 
   // 2. Sorting
-  filteredPatients.sort((a, b) => {
-    if (sortBy === 'priority') {
+  if (filterTab === 'active_visits') {
+    filteredPatients.sort((a, b) => {
       const prioMap = { 'P1': 1, 'P2': 2, 'P3': 3, 'P4': 4, 'P5': 5 }
       const aVal = prioMap[a.current_priority] || 99
       const bVal = prioMap[b.current_priority] || 99
       if (aVal !== bVal) return aVal - bVal
+      
+      const scoreA = a.dynamic_priority_score || 0
+      const scoreB = b.dynamic_priority_score || 0
+      if (scoreB !== scoreA) return scoreB - scoreA
+      
       return new Date(a.arrival_time) - new Date(b.arrival_time)
-    } else if (sortBy === 'wait_time') {
-      return new Date(a.arrival_time) - new Date(b.arrival_time)
-    } else if (sortBy === 'name') {
-      return (a.name || '').localeCompare(b.name || '')
-    }
-    return 0
-  })
+    })
+  } else {
+    filteredPatients.sort((a, b) => {
+      if (sortBy === 'priority') {
+        const prioMap = { 'P1': 1, 'P2': 2, 'P3': 3, 'P4': 4, 'P5': 5 }
+        const aVal = prioMap[a.current_priority] || 99
+        const bVal = prioMap[b.current_priority] || 99
+        if (aVal !== bVal) return aVal - bVal
+        return new Date(a.arrival_time) - new Date(b.arrival_time)
+      } else if (sortBy === 'wait_time') {
+        return new Date(a.arrival_time) - new Date(b.arrival_time)
+      } else if (sortBy === 'name') {
+        return (a.name || '').localeCompare(b.name || '')
+      }
+      return 0
+    })
+  }
 
   return (
     <div className="app-container" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--bg-base)', width: '100%' }}>
@@ -885,13 +1224,14 @@ export default function CommandCenter() {
             flexShrink: 0,
             display: 'flex',
             flexDirection: 'column',
-            gap: '20px',
+            gap: '12px',
             background: 'var(--bg-card)',
             border: '1px solid var(--border)',
             borderRadius: 'var(--r-md)',
             padding: '16px',
             boxShadow: 'var(--shadow-sm)',
-            height: 'fit-content'
+            maxHeight: 'calc(100vh - 125px)',
+            overflowY: 'auto'
           }}>
 
             {/* Search Input */}
@@ -1084,6 +1424,29 @@ export default function CommandCenter() {
                 </button>
 
                 <button
+                  onClick={() => setFilterTab('observation')}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: filterTab === 'observation' ? 'rgba(124, 58, 237, 0.08)' : 'transparent',
+                    color: filterTab === 'observation' ? 'var(--accent)' : 'var(--text-secondary)',
+                    fontWeight: filterTab === 'observation' ? 700 : 500,
+                    fontSize: '0.85rem',
+                    textAlign: 'left',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <span>Observation (Admitted)</span>
+                  <span className="badge">
+                    {queue.filter(p => p.status === 'admitted').length}
+                  </span>
+                </button>
+
+                <button
                   onClick={() => setFilterTab('completed')}
                   style={{
                     display: 'flex',
@@ -1109,7 +1472,37 @@ export default function CommandCenter() {
             </div>
 
 
-            <SimulationControls onRefresh={refresh} selectedPatientId={queue[0]?.id} />
+            <SimulationControls 
+              onRefresh={refresh} 
+              selectedPatientId={queue[0]?.id} 
+              currentStage={simStage}
+              setCurrentStage={setSimStage}
+              isPlaying={simPlaying}
+              setIsPlaying={setSimPlaying}
+              onStepStage={handleStepStage}
+              onSimulateIntake={(patientData) => {
+                setSearchId(patientData.patient_identifier);
+                setIdType('abha');
+                setLookupResult({ exists: false, isTemp: false });
+                setIsEmergency(false);
+                setIsLocked(false);
+                setIntakeData({
+                  name: patientData.name,
+                  patient_identifier: patientData.patient_identifier,
+                  age: patientData.age,
+                  sex: patientData.sex || 'M',
+                  chief_complaint: patientData.chief_complaint,
+                  history_available: patientData.history_available,
+                  relevant_history: patientData.relevant_history || '',
+                  assigned_doctor: ''
+                });
+                setFilterTab('vitals_pending'); // Switch tab to Vitals Pending
+                setShowIntake(true); // Open pre-filled intake dialog
+              }}
+              onSeedSuccess={() => {
+                setFilterTab('vitals_pending'); // Switch tab to Vitals Pending on seed
+              }}
+            />
             <div style={{ flex: 1 }} />
           </div>
 
@@ -1354,8 +1747,9 @@ export default function CommandCenter() {
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
                           {activeIndex === 0 ? (
                             <button
+                              id={`btn-vitals-${p.id}`}
                               className="btn btn-outline-warning btn-sm"
-                              onClick={(e) => { e.stopPropagation(); navigate(`/patient/${p.id}`) }}
+                              onClick={(e) => { e.stopPropagation(); setActionModal({ isOpen: true, type: 'vitals', patient: p }) }}
                               style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '4px 8px', minWidth: '110px', justifyContent: 'center' }}
                             >
                               <Activity size={12} />
@@ -1364,9 +1758,22 @@ export default function CommandCenter() {
                           ) : activeIndex === 1 ? (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
                               <button
-                                className="btn btn-primary btn-sm"
-                                onClick={(e) => { e.stopPropagation(); navigate(`/patient/${p.id}`) }}
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', padding: '4px 8px', width: '150px', justifyContent: 'center' }}
+                                className="btn btn-sm"
+                                onClick={(e) => { e.stopPropagation(); setScanModalPatient(p) }}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  fontSize: '0.72rem',
+                                  padding: '4px 8px',
+                                  width: '150px',
+                                  justifyContent: 'center',
+                                  background: '#ffffff',
+                                  color: 'var(--accent)',
+                                  border: '1px solid var(--accent)',
+                                  fontWeight: 600,
+                                  cursor: 'pointer'
+                                }}
                               >
                                 <Search size={11} />
                                 Check Recommended Scans
@@ -1379,12 +1786,24 @@ export default function CommandCenter() {
                                     Under Scan...
                                   </span>
                                   <button
+                                    id={`btn-complete-scan-${p.id}`}
                                     className="btn btn-ghost btn-xs"
                                     style={{ fontSize: '0.68rem', padding: '2px 6px', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--p5)' }}
                                     onClick={async (e) => {
                                       e.stopPropagation();
+                                      const enterReport = confirm("Would you like to enter/upload scan findings? Click OK to input findings, or Cancel to skip report and mark patient for the doctor queue waiting directly.");
+                                      
+                                      let payload = {};
+                                      if (enterReport) {
+                                        const findings = prompt("Enter scan findings/report (leave empty to auto-generate standard findings):");
+                                        if (findings === null) return; // user cancelled prompt entirely
+                                        payload = { scan_findings: findings, skip_report: false };
+                                      } else {
+                                        payload = { skip_report: true };
+                                      }
+
                                       try {
-                                        await api.post(`/patients/${p.id}/submit-scan-reports/`);
+                                        await api.post(`/patients/${p.id}/submit-scan-reports/`, payload);
                                         refresh();
                                       } catch {
                                         alert("Failed to complete scan.");
@@ -1396,6 +1815,7 @@ export default function CommandCenter() {
                                 </div>
                               ) : (
                                 <button
+                                  id={`btn-start-scan-${p.id}`}
                                   className="btn btn-outline-warning btn-xs"
                                   style={{ fontSize: '0.68rem', padding: '2px 8px', width: '150px', justifyContent: 'center' }}
                                   onClick={async (e) => {
@@ -1463,6 +1883,23 @@ export default function CommandCenter() {
                                 className="btn btn-ghost btn-sm"
                                 onClick={(e) => handleDisposition(e, p, 'discharged')}
                                 style={{ fontSize: '0.7rem', padding: '4px 8px', border: '1px solid var(--border)' }}
+                              >
+                                Discharge
+                              </button>
+                            </div>
+                          ) : activeIndex === 4 ? (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end' }}>
+                              <button
+                                className="btn btn-outline-warning btn-sm"
+                                onClick={(e) => handleDisposition(e, p, 'referred')}
+                                style={{ fontSize: '0.7rem', padding: '4px 8px' }}
+                              >
+                                Refer
+                              </button>
+                              <button
+                                className="btn btn-outline-success btn-sm"
+                                onClick={(e) => handleDisposition(e, p, 'discharged')}
+                                style={{ fontSize: '0.7rem', padding: '4px 8px' }}
                               >
                                 Discharge
                               </button>
@@ -1703,7 +2140,7 @@ export default function CommandCenter() {
                     </p>
                     <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                       <button type="button" className="btn btn-ghost" onClick={() => setShowIntake(false)}>Cancel</button>
-                      <button type="submit" className="btn btn-primary" disabled={submitting}>
+                      <button type="submit" id="btn-submit-intake" className="btn btn-primary" disabled={submitting}>
                         {submitting ? 'Registering…' : 'Register Patient'}
                       </button>
                     </div>
@@ -1731,10 +2168,21 @@ export default function CommandCenter() {
                 <form onSubmit={async (e) => {
                   e.preventDefault();
                   const payload = {};
+                  let validationError = null;
                   ['heart_rate', 'spo2', 'respiratory_rate', 'systolic_bp', 'diastolic_bp', 'temperature'].forEach(f => {
                     const val = e.target[f].value;
-                    if (val) payload[f] = parseFloat(val);
+                    if (val) {
+                      const numVal = parseFloat(val);
+                      if (f === 'spo2' && (numVal < 50 || numVal > 100)) {
+                        validationError = "SpO₂ must be between 50% and 100%.";
+                      }
+                      payload[f] = numVal;
+                    }
                   });
+                  if (validationError) {
+                    alert(validationError);
+                    return;
+                  }
                   payload['mental_status'] = e.target.mental_status.value;
                   try {
                     await addVitals(actionModal.patient.id, payload);
@@ -1749,33 +2197,33 @@ export default function CommandCenter() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
                     <div className="form-group">
                       <label className="form-label" htmlFor="popup-hr">Heart Rate (bpm) <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 4 }}>(e.g. 75)</span></label>
-                      <input type="number" id="popup-hr" name="heart_rate" className="form-input" required />
+                      <input type="number" id="popup-hr" name="heart_rate" className="form-input" defaultValue={prefilledVitals?.heart_rate || ''} required />
                     </div>
                     <div className="form-group">
-                      <label className="form-label" htmlFor="popup-spo2">SpO₂ (%) <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 4 }}>(e.g. 98)</span></label>
-                      <input type="number" id="popup-spo2" name="spo2" className="form-input" required />
+                      <label className="form-label" htmlFor="popup-spo2">SpO₂ (%) <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 4 }}>(50 - 100)</span></label>
+                      <input type="number" id="popup-spo2" name="spo2" min="50" max="100" className="form-input" defaultValue={prefilledVitals?.spo2 || ''} required />
                     </div>
                     <div className="form-group">
                       <label className="form-label" htmlFor="popup-rr">Respiratory Rate (/min) <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 4 }}>(e.g. 16)</span></label>
-                      <input type="number" id="popup-rr" name="respiratory_rate" className="form-input" required />
+                      <input type="number" id="popup-rr" name="respiratory_rate" className="form-input" defaultValue={prefilledVitals?.respiratory_rate || ''} required />
                     </div>
                     <div className="form-group">
                       <label className="form-label" htmlFor="popup-sbp">Systolic BP (mmHg) <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 4 }}>(e.g. 120)</span></label>
-                      <input type="number" id="popup-sbp" name="systolic_bp" className="form-input" required />
+                      <input type="number" id="popup-sbp" name="systolic_bp" className="form-input" defaultValue={prefilledVitals?.systolic_bp || ''} required />
                     </div>
                     <div className="form-group">
                       <label className="form-label" htmlFor="popup-dbp">Diastolic BP (mmHg) <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 4 }}>(e.g. 80)</span></label>
-                      <input type="number" id="popup-dbp" name="diastolic_bp" className="form-input" required />
+                      <input type="number" id="popup-dbp" name="diastolic_bp" className="form-input" defaultValue={prefilledVitals?.diastolic_bp || ''} required />
                     </div>
                     <div className="form-group">
                       <label className="form-label" htmlFor="popup-temp">Temperature (°C) <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 4 }}>(e.g. 36.8)</span></label>
-                      <input type="number" step="0.1" id="popup-temp" name="temperature" className="form-input" required />
+                      <input type="number" step="0.1" id="popup-temp" name="temperature" className="form-input" defaultValue={prefilledVitals?.temperature || ''} required />
                     </div>
                   </div>
 
                   <div className="form-group" style={{ marginBottom: '20px' }}>
                     <label className="form-label" htmlFor="popup-mental">Mental Status</label>
-                    <select id="popup-mental" name="mental_status" className="form-select">
+                    <select id="popup-mental" name="mental_status" className="form-select" key={prefilledVitals?.mental_status || 'mental'} defaultValue={prefilledVitals?.mental_status || 'alert'}>
                       <option value="alert">Alert</option>
                       <option value="confused">Confused</option>
                       <option value="unresponsive">Unresponsive</option>
@@ -1784,7 +2232,7 @@ export default function CommandCenter() {
 
                   <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                     <button type="button" className="btn btn-ghost" onClick={closeActionModal}>Cancel</button>
-                    <button type="submit" className="btn btn-primary">Save & Triage</button>
+                    <button type="submit" id="btn-submit-vitals" className="btn btn-primary">Save & Triage</button>
                   </div>
                 </form>
               ) : actionModal.type === 'symptoms' ? (
@@ -1953,6 +2401,88 @@ export default function CommandCenter() {
               refresh();
             }}
           />
+        )}
+
+        {scanModalPatient && (
+          <div className="dialog-overlay" onClick={() => setScanModalPatient(null)}>
+            <div 
+              className="dialog-box" 
+              style={{ 
+                maxWidth: '480px', 
+                width: '90vw',
+                padding: '24px', 
+                background: 'var(--bg-surface)', 
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--r-md)',
+                boxShadow: 'var(--shadow-lg)'
+              }} 
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                  Recommended Scans & Tests
+                </h3>
+                <button className="btn btn-ghost btn-icon" onClick={() => setScanModalPatient(null)} aria-label="Close">
+                  <X size={16} />
+                </button>
+              </div>
+              
+              <div style={{ marginBottom: '18px', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
+                <div style={{ fontSize: '0.96rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  {scanModalPatient.name}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  {scanModalPatient.age}y · {scanModalPatient.sex} · Chief Complaint: "{scanModalPatient.chief_complaint}"
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto', paddingRight: '4px' }}>
+                {scanModalPatient.latest_assessment?.ai_decision_support?.preliminary_tests?.length > 0 ? (
+                  scanModalPatient.latest_assessment.ai_decision_support.preliminary_tests.map((test, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        background: 'rgba(59, 130, 246, 0.04)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid rgba(59, 130, 246, 0.15)',
+                        fontSize: '0.8rem',
+                        padding: '10px 14px',
+                        borderRadius: '6px',
+                        fontWeight: 600,
+                        lineHeight: '1.4',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}
+                    >
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#3b82f6', display: 'inline-block', flexShrink: 0 }}></span>
+                      <span>{test}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                    No preliminary tests recommended for this patient.
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px', gap: '8px' }}>
+                <button className="btn btn-ghost" onClick={() => setScanModalPatient(null)}>
+                  Close
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const pid = scanModalPatient.id;
+                    setScanModalPatient(null);
+                    navigate(`/patient/${pid}`);
+                  }}
+                >
+                  View Full File
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div >

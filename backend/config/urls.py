@@ -4,7 +4,7 @@ from django.urls import path, include
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/v1/', include([
+    path('api/', include([
         path('patients/', include('patients.urls')),
         path('patients/<uuid:patient_id>/assessments/', include('triage.assessment_urls')),
         path('patients/<uuid:patient_id>/override/', include('overrides.patient_urls')),

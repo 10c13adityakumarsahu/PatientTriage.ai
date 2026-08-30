@@ -13,6 +13,12 @@ class VitalReadingSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at']
 
+    def validate_spo2(self, value):
+        if value is not None:
+            if value < 50 or value > 100:
+                raise serializers.ValidationError("SpO2 must be between 50% and 100%.")
+        return value
+
 
 class PatientNoteSerializer(serializers.ModelSerializer):
     class Meta:

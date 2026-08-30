@@ -1,7 +1,7 @@
 /** Centralised API client — all calls go through axios with base URL */
 import axios from 'axios'
 
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
 const WS_BASE = import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
 
 export const api = axios.create({ baseURL: BASE, timeout: 10000 })
@@ -52,6 +52,7 @@ export const triggerSurge    = ()     => api.post('/simulation/surge/')
 export const resetSimulation = ()     => api.post('/simulation/reset/')
 export const getSimStatus    = ()     => api.get('/simulation/status/')
 export const intakeNextSimulation = () => api.post('/simulation/intake-next/')
+export const getNextPatientData = () => api.get('/simulation/next-patient-data/')
 
 // ── WebSocket ─────────────────────────────────────────────────
 export const WS_URL = `${WS_BASE}/ws/ed/live/`

@@ -28,7 +28,7 @@ class PatientIntakeAITests(TestCase):
         )
 
     def test_patient_lookup_existing(self):
-        response = self.client.get('/api/v1/patients/lookup/', {'identifier': 'ABHA-1234-5678'})
+        response = self.client.get('/api/patients/lookup/', {'identifier': 'ABHA-1234-5678'})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data['exists'])
         self.assertEqual(response.data['demographics']['name'], "Test Patient")
@@ -36,7 +36,7 @@ class PatientIntakeAITests(TestCase):
         self.assertEqual(response.data['past_records'][0]['chief_complaint'], "moderate chest pain")
 
     def test_patient_lookup_nonexistent(self):
-        response = self.client.get('/api/v1/patients/lookup/', {'identifier': 'ABHA-0000-1111'})
+        response = self.client.get('/api/patients/lookup/', {'identifier': 'ABHA-0000-1111'})
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data['exists'])
 
@@ -47,7 +47,7 @@ class PatientIntakeAITests(TestCase):
             'age': 60,
             'sex': 'M'
         }
-        response = self.client.post('/api/v1/triage/ai-analyze/', payload, format='json')
+        response = self.client.post('/api/triage/ai-analyze/', payload, format='json')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['complexity'], 'High')
         self.assertTrue(any("ECG" in test for test in response.data['preliminary_tests']))
@@ -75,7 +75,7 @@ class PatientIntakeAITests(TestCase):
             'relevant_history': 'Hypertension'
         }
         
-        response = self.client.patch(f'/api/v1/patients/{temp_patient.id}/', payload, format='json')
+        response = self.client.patch(f'/api/patients/{temp_patient.id}/', payload, format='json')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['patient_identifier'], 'ABHA-1234-5678')
         self.assertEqual(response.data['name'], 'Test Patient')
@@ -87,7 +87,7 @@ class PatientIntakeAITests(TestCase):
 
     def test_scan_workflow(self):
         # Mark under scan
-        resp = self.client.post(f'/api/v1/patients/{self.patient.id}/mark-under-scan/')
+        resp = self.client.post(f'/api/patients/{self.patient.id}/mark-under-scan/')
         self.assertEqual(resp.status_code, 200)
         self.patient.refresh_from_db()
         self.assertTrue(self.patient.under_scan)
@@ -98,10 +98,28 @@ class PatientIntakeAITests(TestCase):
             'scan_findings': 'Acute subdural hemorrhage with mass effect.',
             'scan_type': 'CT Brain'
         }
-        resp = self.client.post(f'/api/v1/patients/{self.patient.id}/submit-scan-reports/', payload, format='json')
+        resp = self.client.post(f'/api/patients/{self.patient.id}/submit-scan-reports/', payload, format='json')
         self.assertEqual(resp.status_code, 200)
         self.patient.refresh_from_db()
         self.assertFalse(self.patient.under_scan)
         self.assertEqual(self.patient.scheduler_state, 'ready')
         self.assertEqual(self.patient.scan_reports, 'Acute subdural hemorrhage with mass effect.')
+
+    def test_spo2_validation(self):
+        # 1. Invalid high SpO2 (120) should fail
+        payload = {'heart_rate': 80, 'spo2': 120, 'respiratory_rate': 16, 'systolic_bp': 120, 'diastolic_bp': 80, 'temperature': 37.0, 'mental_status': 'alert'}
+        resp = self.client.post(f'/api/patients/{self.patient.id}/vitals/', payload, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('spo2', resp.data)
+
+        # 2. Invalid low SpO2 (40) should fail
+        payload = {'heart_rate': 80, 'spo2': 40, 'respiratory_rate': 16, 'systolic_bp': 120, 'diastolic_bp': 80, 'temperature': 37.0, 'mental_status': 'alert'}
+        resp = self.client.post(f'/api/patients/{self.patient.id}/vitals/', payload, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('spo2', resp.data)
+
+        # 3. Valid SpO2 (98) should pass
+        payload = {'heart_rate': 80, 'spo2': 98, 'respiratory_rate': 16, 'systolic_bp': 120, 'diastolic_bp': 80, 'temperature': 37.0, 'mental_status': 'alert'}
+        resp = self.client.post(f'/api/patients/{self.patient.id}/vitals/', payload, format='json')
+        self.assertEqual(resp.status_code, 201)
 

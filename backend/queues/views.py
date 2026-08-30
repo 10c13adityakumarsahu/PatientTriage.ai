@@ -47,11 +47,22 @@ def queue_stats(request):
         .values_list('patient_id', flat=True)
     )
 
+    # Calculate average resource utilization from resources
+    try:
+        from routing.models import Resource
+        resources = Resource.objects.all()
+        total_capacity = sum(r.capacity for r in resources)
+        total_occupied = sum(r.occupied for r in resources)
+        avg_utilisation = (total_occupied / total_capacity * 100) if total_capacity else 0
+    except Exception:
+        avg_utilisation = 0
+
     return Response({
         'total_waiting': total,
         'by_priority': by_priority,
         'p1_p2_count': by_priority['P1'] + by_priority['P2'],
         'escalating_count': len(escalating_ids),
+        'average_resource_utilisation': avg_utilisation,
         'timestamp': timezone.now().isoformat(),
     })
 

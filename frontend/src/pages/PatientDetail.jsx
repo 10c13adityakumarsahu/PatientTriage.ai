@@ -105,6 +105,8 @@ function VitalItem({ label, value, unit, status, name, editing, defaultValue }) 
           <input
             type="number"
             step={name === 'temperature' ? '0.1' : '1'}
+            min={name === 'spo2' ? '50' : undefined}
+            max={name === 'spo2' ? '100' : undefined}
             name={name}
             className="vital-input-edit"
             defaultValue={defaultValue || ''}
@@ -221,6 +223,8 @@ export default function PatientDetail() {
 
   const latestAssessment = assessments[0]
   const latestVitals = patient.vital_readings?.[0]
+  const seq = getCareSequence(patient, latestAssessment)
+  const { activeIndex } = seq
   const wait = waitMinutes(patient.arrival_time)
   const confPercent = latestAssessment && latestAssessment.confidence != null
     ? (latestAssessment.confidence > 1 ? Math.round(latestAssessment.confidence) : Math.round(latestAssessment.confidence * 100))
@@ -292,6 +296,63 @@ export default function PatientDetail() {
                 <RefreshCw size={12} />
                 Refresh
               </button>
+
+              {activeIndex === 2 && (
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => handleStatusChange('in_progress')}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Activity size={12} />
+                  Start Visit
+                </button>
+              )}
+
+              {activeIndex === 3 && (
+                <>
+                  <button
+                    className="btn btn-outline-success btn-sm"
+                    onClick={() => handleStatusChange('admitted')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    Admit
+                  </button>
+                  <button
+                    className="btn btn-outline-warning btn-sm"
+                    onClick={() => handleStatusChange('referred')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    Refer
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => handleStatusChange('discharged')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)' }}
+                  >
+                    Discharge
+                  </button>
+                </>
+              )}
+
+              {activeIndex === 4 && (
+                <>
+                  <button
+                    className="btn btn-outline-warning btn-sm"
+                    onClick={() => handleStatusChange('referred')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    Refer
+                  </button>
+                  <button
+                    className="btn btn-outline-success btn-sm"
+                    onClick={() => handleStatusChange('discharged')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    Discharge
+                  </button>
+                </>
+              )}
+
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={handleReassess}

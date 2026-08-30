@@ -107,6 +107,16 @@ export default function TopNavbar({ activeTab, surgeActive, loading, onRefresh, 
           </span>
         )}
         <span className="header-time" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+        {onNewIntake && (
+          <button 
+            className="btn btn-primary btn-sm" 
+            onClick={onNewIntake} 
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: '32px' }}
+          >
+            <Plus size={14} />
+            Add Patient
+          </button>
+        )}
         {onRefresh && (
           <button className="btn btn-ghost btn-icon btn-sm" onClick={onRefresh} title="Refresh Live Queue">
             <RefreshCw size={14} className={loading ? 'spin' : ''} />

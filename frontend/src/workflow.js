@@ -1,19 +1,15 @@
 /** Shared ED care-sequence helpers for the live queue and patient record. */
 
-export const DISPOSITION_STATUSES = ['admitted', 'referred', 'discharged']
+export const DISPOSITION_STATUSES = ['referred', 'discharged']
 
 export const DISPOSITION_LABELS = {
-  admitted: 'Admitted',
   referred: 'Referred',
   discharged: 'Discharged',
 }
 
 /**
  * Resolve the current step in:
- * Vitals → Scan → In Queue → Seen → Admit | Refer | Discharge
- *
- * Scan is only required when the latest assessment recommends tests.
- * Completing a scan returns the patient to In Queue; it does not skip the queue.
+ * Vitals → Scan → In Queue → Seen → Observation → Completed (Discharged / Referred)
  */
 export function getCareSequence(patient, latestAssessment) {
   const assessment = latestAssessment || patient?.latest_assessment
@@ -28,10 +24,13 @@ export function getCareSequence(patient, latestAssessment) {
   const status = patient?.status || 'waiting'
   const isDone = DISPOSITION_STATUSES.includes(status)
   const isInProgress = status === 'in_progress'
+  const isAdmitted = status === 'admitted'
   const isWaiting = status === 'waiting'
 
   let activeIndex = 0
   if (isDone) {
+    activeIndex = 5
+  } else if (isAdmitted) {
     activeIndex = 4
   } else if (isInProgress) {
     activeIndex = 3
@@ -48,7 +47,7 @@ export function getCareSequence(patient, latestAssessment) {
   else if (scanDone) scanDesc = 'Complete'
   else if (scanRequired) scanDesc = 'Ordered'
 
-  const lastLabel = isDone ? DISPOSITION_LABELS[status] : 'Disposition'
+  const lastLabel = isDone ? DISPOSITION_LABELS[status] : 'Completed'
 
   return {
     activeIndex,
@@ -58,6 +57,7 @@ export function getCareSequence(patient, latestAssessment) {
     scanDone,
     isDone,
     isInProgress,
+    isAdmitted,
     isWaiting,
     dispositionKey: isDone ? status : null,
     lastLabel,
@@ -75,9 +75,14 @@ export function getCareSequence(patient, latestAssessment) {
         desc: isInProgress ? 'In progress' : activeIndex > 3 ? 'Complete' : 'Pending',
       },
       {
+        key: 'admitted',
+        label: 'Observation',
+        desc: isAdmitted ? 'Under observation' : activeIndex > 4 ? 'Complete' : 'Pending',
+      },
+      {
         key: 'disposition',
         label: lastLabel,
-        desc: isDone ? DISPOSITION_LABELS[status] : 'Admit / Refer / Discharge',
+        desc: isDone ? DISPOSITION_LABELS[status] : 'Discharged / Referred',
       },
     ],
   }

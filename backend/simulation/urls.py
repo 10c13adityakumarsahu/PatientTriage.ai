@@ -9,4 +9,5 @@ urlpatterns = [
     path('reset/', views.reset),
     path('status/', views.sim_status),
     path('intake-next/', views.intake_next),
+    path('next-patient-data/', views.next_patient_data),
 ]

@@ -30,14 +30,20 @@ from typing import Optional
 from dotenv import load_dotenv
 
 # Ensure dotenv is loaded relative to the backend workspace on module import
-load_dotenv(r"c:\Users\Adity\Desktop\6a7c763e089e4_aic_2026\Application\backend\.env")
+def _load_dynamic_dotenv():
+    backend_dir = Path(__file__).resolve().parent.parent
+    env_path = backend_dir / ".env"
+    load_dotenv(str(env_path))
+
+_load_dynamic_dotenv()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AI Mode constants (published via ai_mode_status())
 # ─────────────────────────────────────────────────────────────────────────────
 AI_MODE_FULL = "FULL_AI"       # Gemini API + RAG context
-AI_MODE_RAG  = "RAG_ONLY"     # Knowledge store only (Gemini offline)
+# Pure rule-based, no AI or knowledge store (In case of circuit break)
 AI_MODE_STATIC = "STATIC"     # Pure rule-based, no AI or knowledge store (In case of circuit break)
+AI_MODE_RAG  = "RAG_ONLY"     # Knowledge store only (Gemini offline)
 
 _key_present = bool(os.getenv("GEMINI_API_KEY", "").strip())
 _current_ai_mode = AI_MODE_FULL if _key_present else (
@@ -58,7 +64,7 @@ def ai_mode_status() -> dict:
     """
     global _cb_open, _cb_failure_count, _current_ai_mode
     # Reload .env dynamically so updates are read at runtime without restarting Django
-    load_dotenv(r"c:\Users\Adity\Desktop\6a7c763e089e4_aic_2026\Application\backend\.env")
+    _load_dynamic_dotenv()
     key_present = bool(os.getenv("GEMINI_API_KEY", "").strip())
     
     # If key is present and circuit was open or mode was downgraded, auto-restore FULL_AI
@@ -86,7 +92,7 @@ def set_force_static(value: bool):
         _cb_open = False
         _cb_failure_count = 0
         # Reload env vars
-        load_dotenv(r"c:\Users\Adity\Desktop\6a7c763e089e4_aic_2026\Application\backend\.env")
+        _load_dynamic_dotenv()
         key_present = bool(os.getenv("GEMINI_API_KEY", "").strip())
         _current_ai_mode = AI_MODE_FULL if key_present else (
             AI_MODE_RAG if (Path(__file__).parent / "medical_knowledge.json").exists() else AI_MODE_STATIC
@@ -345,18 +351,28 @@ def call_gemini_api(prompt: str) -> Optional[dict]:
     global _cb_failure_count, _cb_open
 
     # Reload .env dynamically so updates are read at runtime without restarting Django
-    load_dotenv(r"c:\Users\Adity\Desktop\6a7c763e089e4_aic_2026\Application\backend\.env")
+    _load_dynamic_dotenv()
 
     if _cb_open:
         return None
 
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
+    # Fast bypass for placeholder dummy keys or bypass environment settings to run instantly
+    if not api_key or "AIzaSy" in api_key or os.getenv("BYPASS_GEMINI_API", "true").lower() == "true":
         return None
+
+    # Dynamically resolve model name from settings or environment
+    try:
+        from django.conf import settings
+        model_name = getattr(settings, 'GEMINI_MODEL', None)
+    except Exception:
+        model_name = None
+    if not model_name:
+        model_name = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview").strip()
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash:generateContent?key={api_key}"
+        f"{model_name}:generateContent?key={api_key}"
     )
 
     payload = {
@@ -389,9 +405,9 @@ def call_gemini_api(prompt: str) -> Optional[dict]:
                 AuditEvent.log(
                     event_type='ai_generation_success',
                     actor_type='ai',
-                    actor_id='gemini-2.5-flash',
+                    actor_id=model_name,
                     new_state={
-                        'model': 'gemini-2.5-flash',
+                        'model': model_name,
                         'prompt_length': len(prompt),
                         'response_keys': list(parsed.keys()) if isinstance(parsed, dict) else [],
                     },
@@ -411,7 +427,7 @@ def call_gemini_api(prompt: str) -> Optional[dict]:
             AuditEvent.log(
                 event_type='ai_generation_failure',
                 actor_type='ai',
-                actor_id='gemini-2.5-flash',
+                actor_id=model_name,
                 new_state={
                     'error': str(e),
                     'failure_count': _cb_failure_count,
@@ -424,7 +440,7 @@ def call_gemini_api(prompt: str) -> Optional[dict]:
             
         if _cb_failure_count >= _CB_THRESHOLD:
             _cb_open = True
-            print("[Gemini] Circuit breaker OPEN — switching to RAG_ONLY mode")
+            print(f"[Gemini] Circuit breaker OPEN — switching to RAG_ONLY mode using model {model_name}")
         return None
 
 
