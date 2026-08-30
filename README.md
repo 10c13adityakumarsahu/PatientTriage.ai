@@ -28,6 +28,7 @@ To simplify clinical walkthroughs, the system features a visual **Auto-Play Simu
 - **Context-Aware Tab Switching**: The system automatically switches views to the relevant tabs (e.g. `Vitals Pending` when entering vital signs, `Tests Suggested` when completing scans) as the cursor acts.
 - **Mock Dialog Bypass**: Browser prompt and confirmation dialogues are temporarily mocked during Auto-Play, ensuring the simulation proceeds without blocking popup alerts.
 
+<<<<<<< HEAD
 ### 5. Resilient Offline RAG Fallback & Gemini Bypass
 To prevent system freezes during network timeouts:
 - **Local RAG Fallback**: If the Gemini API is offline or returns rate limit errors, the system falls back to a local RAG Knowledge Store, executing diagnostic logic instantly (<100ms).
@@ -94,6 +95,12 @@ flowchart TD
     N -- Discharge/Refer --> P[Release ED Resources]
     O --> Q[Discharge from Obs]
     Q --> P
+=======
+## Repository Structure
+```text
+backend/
+frontend/
+>>>>>>> ec2ef1d3db56b4c6feb21f820d05317d0aa19df8
 ```
 
 #### Scenario A: Zero-History & Identity Resolution
