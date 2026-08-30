@@ -4,7 +4,7 @@
 
 ---
 
-## 🌟 The Product Vision & Moat
+## The Product Vision & Moat
 
 ### 1. The Core Product Principle: "AI Recommends. Clinicians Decide."
 PatientTriage.ai acts as a safety-first clinician co-pilot, not an autonomous agent. 
@@ -36,7 +36,7 @@ To prevent system freezes during network timeouts:
 
 ---
 
-## 🧠 Clinical Intelligence & Rules
+## Clinical Intelligence & Rules
 
 ### 1. Age-Specific Clinical Interpretation
 Triage recommendations are adjusted for different age groups:
@@ -51,7 +51,7 @@ During surge events (activated via **3× Surge**), the system automatically adju
 
 ---
 
-## 🔄 Internal Application Features & User Flows
+## Internal Application Features & User Flows
 
 ### 1. Resource Mapping & Capacity Tracking
 The system models clinical and personnel resources as finite cores to accurately represent ED constraints:
@@ -135,7 +135,7 @@ frontend/
 
 ---
 
-## 🛠 Technical Architecture & Stack
+## Technical Architecture & Stack
 
 ### Backend (Django + Channels)
 - **Django REST Framework**: Implements clean, typed API contracts.
@@ -149,7 +149,7 @@ frontend/
 
 ---
 
-## 📂 Repository Structure
+## Repository Structure
 
 ```text
 ├── backend/
@@ -169,7 +169,7 @@ frontend/
 
 ---
 
-## 🚀 Setup & Installation
+## Setup & Installation
 
 ### Backend Setup
 1. Navigate to the backend directory:
