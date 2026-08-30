@@ -35,19 +35,6 @@ This repository is a prototype using synthetic/illustrative data. It is not clin
 ```text
 backend/
 frontend/
-data/
-AGENTS.md
-PRODUCT.md
-DOMAIN.md
-DECISION_ENGINE.md
-SAFETY.md
-DATA_MODEL.md
-API_SPEC.md
-UX_SPEC.md
-SIMULATION.md
-EVALUATION.md
-ARCHITECTURE.md
-ROADMAP.md
 ```
 
 ## Core Flow
