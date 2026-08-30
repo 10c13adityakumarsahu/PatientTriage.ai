@@ -44,10 +44,10 @@ export default function SimulationControls({ onRefresh, selectedPatientId }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px', background: 'var(--bg-hover)', borderRadius: 'var(--r-md)', border: '1px solid var(--border)', marginTop: '8px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Simulation Controls</span>
-        <span className="badge" style={{ 
-          fontSize: '0.66rem', 
-          background: 'rgba(124, 58, 237, 0.1)', 
-          color: 'var(--accent)', 
+        <span className="badge" style={{
+          fontSize: '0.66rem',
+          background: 'rgba(124, 58, 237, 0.1)',
+          color: 'var(--accent)',
           border: '1px solid rgba(124, 58, 237, 0.2)',
           padding: '2px 6px',
           borderRadius: '4px',
@@ -55,13 +55,13 @@ export default function SimulationControls({ onRefresh, selectedPatientId }) {
         }}>
           Stage: {
             currentStage === 'wait_reassessment' ? 'Triage Reassess' :
-            currentStage === 'io_completion' ? 'Diagnostic I/O' :
-            currentStage === 'priority_aging' ? 'Dynamic Aging' :
-            'Clinician Allocation'
+              currentStage === 'io_completion' ? 'Diagnostic I/O' :
+                currentStage === 'priority_aging' ? 'Dynamic Aging' :
+                  'Clinician Allocation'
           }
         </span>
       </div>
-      
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
         <button
           id="btn-seed"
@@ -95,7 +95,6 @@ export default function SimulationControls({ onRefresh, selectedPatientId }) {
           style={{ fontSize: '0.72rem', padding: '6px', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', gridColumn: 'span 2' }}
           title="Simulate sequential intake walk-in of next synthetic patient"
         >
-          <UserPlus size={12} style={{ color: 'var(--accent)' }} />
           {loading === 'intake_next' ? 'Admitting…' : 'Next Patient Intake'}
         </button>
 
@@ -110,7 +109,6 @@ export default function SimulationControls({ onRefresh, selectedPatientId }) {
           style={{ fontSize: '0.72rem', padding: '6px', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', gridColumn: 'span 2' }}
           title="Simulate patient deterioration"
         >
-          <TrendingDown size={12} />
           {loading === 'det' ? '…' : 'Deteriorate Selected'}
         </button>
 
@@ -122,7 +120,6 @@ export default function SimulationControls({ onRefresh, selectedPatientId }) {
           style={{ fontSize: '0.72rem', padding: '6px', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', gridColumn: 'span 2' }}
           title="Activate 3× surge"
         >
-          <Zap size={12} />
           {loading === 'surge' ? '…' : surgeActive ? 'Surge Active' : '3× Surge'}
         </button>
 
@@ -137,7 +134,6 @@ export default function SimulationControls({ onRefresh, selectedPatientId }) {
           style={{ fontSize: '0.72rem', padding: '6px', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', gridColumn: 'span 2', color: 'var(--p1)' }}
           title="Reset simulation"
         >
-          <RefreshCw size={12} />
           {loading === 'reset' ? '…' : 'Reset Data'}
         </button>
       </div>

@@ -963,7 +963,7 @@ export default function CommandCenter() {
                   }}
                 >
                   <span>All Queue</span>
-                  <span className="badge" style={{ background: filterTab === 'all' ? 'var(--accent)' : 'var(--border)', color: filterTab === 'all' ? '#fff' : 'var(--text-secondary)' }}>
+                  <span className="badge">
                     {queue.filter(p => p.status === 'waiting' || p.status === 'in_progress').length}
                   </span>
                 </button>
@@ -986,7 +986,7 @@ export default function CommandCenter() {
                   }}
                 >
                   <span>Critical (P1/P2)</span>
-                  <span className="badge" style={{ background: filterTab === 'critical' ? 'var(--p1)' : 'var(--border)', color: filterTab === 'critical' ? '#fff' : 'var(--text-secondary)' }}>
+                  <span className="badge">
                     {queue.filter(p => (p.current_priority === 'P1' || p.current_priority === 'P2') && p.status === 'waiting').length}
                   </span>
                 </button>
@@ -1009,7 +1009,7 @@ export default function CommandCenter() {
                   }}
                 >
                   <span>Vitals Pending</span>
-                  <span className="badge" style={{ background: filterTab === 'vitals_pending' ? 'var(--p3)' : 'var(--border)', color: filterTab === 'vitals_pending' ? '#fff' : 'var(--text-secondary)' }}>
+                  <span className="badge">
                     {queue.filter(p => getCareSequence(p).activeIndex === 0).length}
                   </span>
                 </button>
@@ -1032,7 +1032,7 @@ export default function CommandCenter() {
                   }}
                 >
                   <span>Scan</span>
-                  <span className="badge" style={{ background: filterTab === 'tests_suggested' ? '#3b82f6' : 'var(--border)', color: filterTab === 'tests_suggested' ? '#fff' : 'var(--text-secondary)' }}>
+                  <span className="badge">
                     {scanPts.length}
                   </span>
                 </button>
@@ -1055,7 +1055,7 @@ export default function CommandCenter() {
                   }}
                 >
                   <span>In Queue</span>
-                  <span className="badge" style={{ background: filterTab === 'in_queue' ? 'var(--p2)' : 'var(--border)', color: filterTab === 'in_queue' ? '#fff' : 'var(--text-secondary)' }}>
+                  <span className="badge">
                     {inQueuePts.length}
                   </span>
                 </button>
@@ -1078,7 +1078,7 @@ export default function CommandCenter() {
                   }}
                 >
                   <span>Seen</span>
-                  <span className="badge" style={{ background: filterTab === 'active_visits' ? 'var(--p5)' : 'var(--border)', color: filterTab === 'active_visits' ? '#fff' : 'var(--text-secondary)' }}>
+                  <span className="badge">
                     {queue.filter(p => p.status === 'in_progress').length}
                   </span>
                 </button>
@@ -1101,7 +1101,7 @@ export default function CommandCenter() {
                   }}
                 >
                   <span>Admit / Refer / Discharge</span>
-                  <span className="badge" style={{ background: filterTab === 'completed' ? 'var(--text-primary)' : 'var(--border)', color: filterTab === 'completed' ? '#fff' : 'var(--text-secondary)' }}>
+                  <span className="badge">
                     {completedPts.length}
                   </span>
                 </button>
@@ -1154,7 +1154,6 @@ export default function CommandCenter() {
 
             {surgeActive && (
               <div className="surge-banner" style={{ borderRadius: 'var(--r-md)', margin: 0 }}>
-                <AlertTriangle size={14} />
                 <span>ED is experiencing surge behavior (3x arrivals). Triage thresholds adjusted.</span>
               </div>
             )}

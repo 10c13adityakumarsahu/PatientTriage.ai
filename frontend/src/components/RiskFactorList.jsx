@@ -28,7 +28,6 @@ export default function RiskFactorList({ riskFactors = [], uncertaintyFlags = []
           <div className="risk-factor-list">
             {uncertaintyFlags.slice(0, 3).map((f, i) => (
               <div key={i} className="risk-factor-item uncertainty-item">
-                <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />
                 {f}
               </div>
             ))}
