@@ -1,0 +1,41 @@
+- [ ] Freeze target ED setting and operating assumptions
+- [ ] Freeze regulatory/data-protection jurisdiction
+- [ ] Define user personas: triage nurse, clinician, charge nurse
+- [ ] Define 5-level priority model
+- [ ] Define patient input schema
+- [ ] Define missing-data behavior
+- [ ] Define pediatric/geriatric handling
+- [ ] Define ambiguity and uncertainty logic
+- [ ] Define escalation-first safety policy
+- [ ] Define dynamic reprioritization triggers
+- [ ] Define waiting-time reassessment thresholds
+- [ ] Define care/resource queues
+- [ ] Define routing logic
+- [ ] Define clinician override workflow
+- [ ] Define audit-log schema
+- [ ] Create 15–20 simulated patient records
+- [ ] Include ambiguous case
+- [ ] Include pediatric/geriatric case
+- [ ] Include zero-history patient
+- [ ] Include deterioration scenario
+- [ ] Include clinician override scenario
+- [ ] Create 3× surge scenario
+- [ ] Implement risk/severity engine
+- [ ] Implement confidence scoring
+- [ ] Implement dynamic priority engine
+- [ ] Implement routing engine
+- [ ] Implement continuous monitoring/re-triage
+- [ ] Implement explainability
+- [ ] Implement safety guardrails
+- [ ] Build live queue dashboard
+- [ ] Build patient detail / reasoning view
+- [ ] Build alert / escalation workflow
+- [ ] Build clinician override UI
+- [ ] Build audit trail
+- [ ] Define prototype metrics
+- [ ] Validate all required scenarios
+- [ ] Document assumptions and architecture
+- [ ] Prepare GitHub README
+- [ ] Record prototype demo
+- [ ] Prepare detailed business proposal
+- [ ] Prepare final pitch narrative
